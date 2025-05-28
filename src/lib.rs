@@ -1,14 +1,48 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+#![no_std]
+
+extern crate alloc;
+
+use alloc::sync::Arc;
+use core::ptr::null;
+use dynamic_cast::{SupportsInterfaces, impl_supports_interfaces};
+
+#[doc(hidden)]
+pub use alloc::sync::Arc as std_sync_Arc;
+
+pub type Vtable = *const *const ();
+
+pub struct Obj {
+    vtable: Vtable,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[repr(usize)]
+pub enum ObjMethods {
+    Count = 0usize,
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Obj {
+    pub fn new() -> Arc<dyn TObj> {
+        Arc::new(unsafe { Self::new_raw(null()) })
     }
+
+    pub unsafe fn new_raw(vtable: Vtable) -> Self {
+        Obj { vtable }
+    }
+}
+
+pub unsafe trait TObj: SupportsInterfaces {
+    fn vtable(&self) -> Vtable;
+}
+
+impl_supports_interfaces!(Obj: TObj);
+
+unsafe impl TObj for Obj {
+    fn vtable(&self) -> Vtable { self.vtable }
+}
+
+#[repr(C)]
+pub struct VtableJoin<const A: usize, const B: usize> {
+    pub a: [*const (); A],
+    pub b: [*const (); B],
 }

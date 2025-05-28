@@ -19,3 +19,4 @@ members = [
 
 [dependencies]
 basic-oop-macro = { path = "macro", version = "0.0.1" }
+dynamic-cast = "0.1.5"
