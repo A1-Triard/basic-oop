@@ -1,6 +1,15 @@
 [package]
-name = "basic-oop"
-version = "0.1.0"
 edition = "2024"
+name = "basic-oop"
+version = "0.0.1"
+rust-version = "1.87"
+authors = ["warlock <internalmike@gmail.com>"]
+description = "Simple OOP for Rust."
+readme = "README.md"
+documentation = "https://docs.rs/basic-oop/"
+keywords = ["virtual", "oop", "arc", "inheritance", "object"]
+categories = ["rust-patterns", "no-std"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/A1-Triard/basic-oop"
 
 [dependencies]
