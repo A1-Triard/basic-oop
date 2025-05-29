@@ -3,8 +3,9 @@
 extern crate alloc;
 
 use alloc::sync::Arc;
-use core::ptr::null;
 use dynamic_cast::{SupportsInterfaces, impl_supports_interfaces};
+
+pub use basic_oop_macro::class;
 
 #[doc(hidden)]
 pub use alloc::sync::Arc as std_sync_Arc;
@@ -25,7 +26,7 @@ pub enum ObjMethods {
 
 impl Obj {
     pub fn new() -> Arc<dyn TObj> {
-        Arc::new(unsafe { Self::new_raw(null()) })
+        Arc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
     }
 
     pub unsafe fn new_raw(vtable: Vtable) -> Self {
@@ -48,3 +49,23 @@ pub struct VtableJoin<const A: usize, const B: usize> {
     pub a: [*const (); A],
     pub b: [*const (); B],
 }
+
+#[macro_export]
+macro_rules! obj_vtable {
+    (
+        $base_methods_count:ident,
+        $self_methods_count:ident,
+        $all_methods_count:expr,
+        $vtable_name:ident
+    ) => { };
+}
+
+pub struct ObjVtable(pub [*const (); ObjMethods::Count as usize]);
+
+impl ObjVtable {
+    pub const fn new() -> Self {
+        ObjVtable([])
+    }
+}
+
+const OBJ_VTABLE: [*const (); ObjMethods::Count as usize] = ObjVtable::new().0;
