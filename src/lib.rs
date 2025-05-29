@@ -8,6 +8,8 @@ use dynamic_cast::{SupportsInterfaces, impl_supports_interfaces};
 
 #[doc(hidden)]
 pub use alloc::sync::Arc as std_sync_Arc;
+#[doc(hidden)]
+pub use core::mem::transmute as std_mem_transmute;
 
 pub type Vtable = *const *const ();
 
