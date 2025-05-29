@@ -90,7 +90,7 @@ fn actual_method_ty(decl_ty: Type, this_trait: &Ident) -> Result<TypeBareFn, Dia
     let this_arg = BareFnArg {
         attrs: Vec::new(),
         name:Some((Ident::new("this", Span::call_site()), <Token![:]>::default())),
-        ty: parse_quote! { &basic_oop::std_sync_Arc<dyn #this_trait> },
+        ty: parse_quote! { &::basic_oop::std_sync_Arc<dyn #this_trait> },
     };
     bare_fn.inputs.insert(0, this_arg);
     Ok(bare_fn)
@@ -264,8 +264,8 @@ impl Class {
             let ty_without_idents = fn_ty_without_idents(ty.clone());
             let mut block: Block = parse_quote! {
                 {
-                    let vtable = basic_oop::TObj::vtable(this.as_ref());
-                    let method = unsafe { basic_oop::std_mem_transmute::<*const (), #ty_without_idents>(
+                    let vtable = ::basic_oop::TObj::vtable(this.as_ref());
+                    let method = unsafe { ::basic_oop::std_mem_transmute::<*const (), #ty_without_idents>(
                         *vtable.add(#methods_enum_name::#enum_name as usize)
                     ) };
                     method()
@@ -307,7 +307,7 @@ impl Class {
         let base = self.base_ty(|x| "T".to_string() + &x)?;
         Ok(quote! {
             #vis trait #trait_name: #base {
-                fn #fn_name(&self) -> #name;
+                fn #fn_name(&self) -> &#name;
             }
         })
     }
@@ -381,19 +381,19 @@ impl Class {
                     self,
                     f: #ty
                 ) -> Self {
-                    let vtable = unsafe { basic_oop:std_mem_transmute::<
+                    let vtable = unsafe { ::basic_oop::std_mem_transmute::<
                         [*const (); #methods_enum_name::Count as usize],
-                        basic_oop::VtableJoin<#base_const_name, #self_const_name>
+                        ::basic_oop::VtableJoin<#base_const_name, #self_const_name>
                     >(self.0) };
-                    let vtable: basic_oop::VtableJoin<
+                    let vtable: ::basic_oop::VtableJoin<
                         #base_const_name,
                         #self_const_name
-                    > = basoc_oop::VtableJoin {
+                    > = ::basic_oop::VtableJoin {
                         a: vtable.a,
                         b: [#list]
                     };
-                    #vtable_name(unsafe { basic_oop::std_mem_transmute::<
-                        basic_oop::VtableJoin<#base_const_name, #self_const_name>,
+                    #vtable_name(unsafe { ::basic_oop::std_mem_transmute::<
+                        ::basic_oop::VtableJoin<#base_const_name, #self_const_name>,
                         [*const (); #methods_enum_name::Count as usize]
                     >(vtable) })
                 }
@@ -404,15 +404,15 @@ impl Class {
 
             impl #vtable_name {
                 pub const fn new() -> Self {
-                    let vtable: basic_oop::VtableJoin<
+                    let vtable: ::basic_oop::VtableJoin<
                         #base_const_name,
                         #self_const_name
-                    > = basic_oop::VtableJoin {
+                    > = ::basic_oop::VtableJoin {
                         a: #base_vtable_name::new().0,
                         b: [#methods_impl]
                     };
-                    #vtable_name(unsafe { basic_oop::std_mem_transmute::<
-                        basic_oop::VtableJoin<#base_const_name, #self_const_name>,
+                    #vtable_name(unsafe { ::basic_oop::std_mem_transmute::<
+                        ::basic_oop::VtableJoin<#base_const_name, #self_const_name>,
                         [*const (); #methods_enum_name::Count as usize]
                     >(vtable) })
                 }
