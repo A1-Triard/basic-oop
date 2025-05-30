@@ -736,6 +736,9 @@ impl Class {
                     FieldKind::Data => fields.push(field.clone()),
                     FieldKind::Method => {
                         let name = field.ident.clone().unwrap();
+                        if name.to_string() == "__class__" {
+                            return Err(name.span().error("this name is reserved"));
+                        }
                         let Type::BareFn(type_fn) = &field.ty else {
                             return Err(field.ty.span().error("invalid virtual method type"));
                         };
