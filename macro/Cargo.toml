@@ -2,7 +2,7 @@
 edition = "2024"
 name = "basic-oop-macro"
 version = "0.0.1"
-rust-version = "1.87"
+#rust-version = "nightly"
 authors = ["warlock <internalmike@gmail.com>"]
 description = "Procedural macro library for basic-oop."
 documentation = "https://docs.rs/basic-oop-macro/"
@@ -16,7 +16,9 @@ proc-macro = true
 
 [dependencies]
 anycase = "0.1.0"
+iter-identify_first_last = "0.2.3"
 itertools = "0.14.0"
+macro_magic = { version = "0.6.0", features = ["proc_support"] }
 proc-macro2 = "1.0.95"
 proc-macro2-diagnostics = "0.10.1"
 quote = "1.0.40"

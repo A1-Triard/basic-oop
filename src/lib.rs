@@ -4,24 +4,29 @@ extern crate alloc;
 
 use alloc::sync::Arc;
 use dynamic_cast::{SupportsInterfaces, impl_supports_interfaces};
-
-pub use basic_oop_macro::class;
+use macro_magic::export_tokens_no_emit;
 
 #[doc(hidden)]
-pub use alloc::sync::Arc as std_sync_Arc;
+pub use macro_magic;
+
+pub use basic_oop_macro::class_unsafe;
+
 #[doc(hidden)]
-pub use core::mem::transmute as std_mem_transmute;
+pub use alloc::sync::Arc as alloc_sync_Arc;
+#[doc(hidden)]
+pub use core::mem::transmute as core_mem_transmute;
+#[doc(hidden)]
+pub use dynamic_cast::SupportsInterfaces as dynamic_cast_SupportsInterfaces;
+#[doc(hidden)]
+pub use dynamic_cast::impl_supports_interfaces as dynamic_cast_impl_supports_interfaces;
+
+#[export_tokens_no_emit]
+struct inherited_from_Obj(::basic_oop::Obj);
 
 pub type Vtable = *const *const ();
 
 pub struct Obj {
     vtable: Vtable,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
-#[repr(usize)]
-pub enum ObjMethods {
-    Count = 0usize,
 }
 
 impl Obj {
@@ -32,35 +37,27 @@ impl Obj {
     pub unsafe fn new_raw(vtable: Vtable) -> Self {
         Obj { vtable }
     }
+
+    pub fn vtable(&self) -> Vtable { self.vtable }
 }
 
-pub unsafe trait TObj: SupportsInterfaces {
-    fn vtable(&self) -> Vtable;
+pub trait TObj: SupportsInterfaces {
+    fn obj(&self) -> &Obj;
 }
 
 impl_supports_interfaces!(Obj: TObj);
 
-unsafe impl TObj for Obj {
-    fn vtable(&self) -> Vtable { self.vtable }
+impl TObj for Obj {
+    fn obj(&self) -> &Obj { self }
 }
 
-#[repr(C)]
-pub struct VtableJoin<const A: usize, const B: usize> {
-    pub a: [*const (); A],
-    pub b: [*const (); B],
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[repr(usize)]
+pub enum ObjMethods {
+    MethodsCount = 0usize,
 }
 
-#[macro_export]
-macro_rules! obj_vtable {
-    (
-        $base_methods_count:ident,
-        $self_methods_count:ident,
-        $all_methods_count:expr,
-        $vtable_name:ident
-    ) => { };
-}
-
-pub struct ObjVtable(pub [*const (); ObjMethods::Count as usize]);
+pub struct ObjVtable(pub [*const (); ObjMethods::MethodsCount as usize]);
 
 impl ObjVtable {
     pub const fn new() -> Self {
@@ -68,4 +65,10 @@ impl ObjVtable {
     }
 }
 
-const OBJ_VTABLE: [*const (); ObjMethods::Count as usize] = ObjVtable::new().0;
+const OBJ_VTABLE: [*const (); ObjMethods::MethodsCount as usize] = ObjVtable::new().0;
+
+#[repr(C)]
+pub struct VtableJoin<const A: usize, const B: usize> {
+    pub a: [*const (); A],
+    pub b: [*const (); B],
+}
