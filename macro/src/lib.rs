@@ -585,23 +585,51 @@ use proc_macro2::{TokenStream, Span};
 use proc_macro2_diagnostics::{Diagnostic, SpanDiagnosticExt};
 use quote::{quote, TokenStreamExt};
 use syn::{parse_macro_input, parse_quote, ItemStruct, Path, Type, Fields, Meta, Attribute, Visibility, Ident};
-use syn::{Field, FieldMutability, TypePath, Token, PathSegment, PathArguments, LitInt};
+use syn::{Field, FieldMutability, TypePath, Token, PathSegment, PathArguments, LitInt, TypeBareFn};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
-fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Path>, Diagnostic> {
-    let Fields::Unnamed(fields) = inherited_from.fields else {
+struct Base {
+    ty: Path,
+    methods: Vec<(Ident, TypeBareFn)>,
+}
+
+fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic> {
+    let Fields::Named(fields) = inherited_from.fields else {
         return Err(inherited_from.fields.span().error("invalid base class"));
     };
-    fields.unnamed.into_iter().map(|field| {
-        let Type::Path(type_path) = field.ty else {
-            return Err(field.ty.span().error("invalid base class"));
-        };
-        if type_path.path.segments.len() < 2 {
-            return Err(type_path.span().error("invalid base class"));
+    let mut res = Vec::new();
+    let mut base = None;
+    for field in fields.named {
+        if field.ident.as_ref().unwrap().to_string() == "__class__" {
+            if let Some(base) = base.take() {
+                res.push(base);
+            }
+            let Type::Path(type_path) = field.ty else {
+                return Err(field.ty.span().error("invalid base class"));
+            };
+            if type_path.path.segments.len() < 2 {
+                return Err(type_path.span().error("invalid base class"));
+            }
+            base = Some(Base {
+                ty: type_path.path,
+                methods: Vec::new()
+            });
+        } else {
+            let name = field.ident.as_ref().unwrap().clone();
+            let Type::BareFn(type_fn) = field.ty else {
+                return Err(field.ty.span().error("invalid base class"));
+            };
+            let Some(base) = base.as_mut() else {
+                return Err(type_fn.span().error("invalid base class"));
+            };
+            base.methods.push((name, type_fn));
         }
-        Ok(type_path.path)
-    }).process_results(|i| i.collect())
+    }
+    if let Some(base) = base.take() {
+        res.push(base);
+    }
+    Ok(res)
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -660,8 +688,8 @@ struct Class {
     name: Ident,
     mod_: Path,
     fields: Vec<Field>,
-    methods: Vec<Field>,
-    overrides: Vec<Field>,
+    methods: Vec<(Ident, TypeBareFn)>,
+    overrides: Vec<(Ident, TypeBareFn)>,
 }
 
 impl Class {
@@ -706,8 +734,26 @@ impl Class {
             } else {
                 match parse_field_attrs(&field.attrs)? {
                     FieldKind::Data => fields.push(field.clone()),
-                    FieldKind::Method => methods.push(field.clone()),
-                    FieldKind::Override => overrides.push(field.clone()),
+                    FieldKind::Method => {
+                        let name = field.ident.clone().unwrap();
+                        let Type::BareFn(type_fn) = &field.ty else {
+                            return Err(field.ty.span().error("invalid virtual method type"));
+                        };
+                        if type_fn.lifetimes.is_some() || type_fn.unsafety.is_some() || type_fn.abi.is_some() {
+                            return Err(field.ty.span().error("invalid virtual method type"));
+                        }
+                        methods.push((name, type_fn.clone()));
+                    },
+                    FieldKind::Override => {
+                        let name = field.ident.clone().unwrap();
+                        let Type::BareFn(type_fn) = &field.ty else {
+                            return Err(field.ty.span().error("invalid override method type"));
+                        };
+                        if type_fn.lifetimes.is_some() || type_fn.unsafety.is_some() || type_fn.abi.is_some() {
+                            return Err(field.ty.span().error("invalid override method type"));
+                        }
+                        overrides.push((name, type_fn.clone()));
+                    },
                 }
             }
         }
@@ -732,27 +778,52 @@ impl Class {
     }
 }
 
-fn build_inherited_from(base_types: &[Path], class_name: &Ident, class_mod: &Path) -> ItemStruct {
+fn build_inherited_from(
+    base_types: &[Base],
+    class_name: &Ident,
+    class_mod: &Path,
+    methods: &[(Ident, TypeBareFn)]
+) -> ItemStruct {
     let name = Ident::new(&("inherited_from_".to_string() + &class_name.to_string()), Span::call_site());
     let mut struct_: ItemStruct = parse_quote! {
         #[::basic_oop::macro_magic::export_tokens_no_emit]
-        struct #name (
-            #class_mod::#class_name
-        );
+        struct #name {
+            __class__: #class_mod::#class_name
+        }
     };
-    let Fields::Unnamed(fields) = &mut struct_.fields else { panic!() };
-    for base_type in base_types {
-        fields.unnamed.push(Field {
+    let Fields::Named(fields) = &mut struct_.fields else { panic!() };
+    for (method_name, method_ty) in methods {
+        fields.named.push(Field {
             attrs: Vec::new(),
             vis: Visibility::Inherited,
             mutability: FieldMutability::None,
-            ident: None,
-            colon_token: None,
+            ident: Some(method_name.clone()),
+            colon_token: Some(<Token![:]>::default()),
+            ty: Type::BareFn(method_ty.clone()),
+        });
+    }
+    for base_type in base_types {
+        fields.named.push(Field {
+            attrs: Vec::new(),
+            vis: Visibility::Inherited,
+            mutability: FieldMutability::None,
+            ident: Some(Ident::new("__class__", Span::call_site())),
+            colon_token: Some(<Token![:]>::default()),
             ty: Type::Path(TypePath {
                 qself: None,
-                path: base_type.clone()
+                path: base_type.ty.clone()
             }),
         });
+        for (method_name, method_ty) in &base_type.methods {
+            fields.named.push(Field {
+                attrs: Vec::new(),
+                vis: Visibility::Inherited,
+                mutability: FieldMutability::None,
+                ident: Some(method_name.clone()),
+                colon_token: Some(<Token![:]>::default()),
+                ty: Type::BareFn(method_ty.clone()),
+            });
+        }
     }
     struct_
 }
@@ -778,14 +849,14 @@ fn build_attrs(attrs: &[Attribute]) -> TokenStream {
 }
 
 fn build_struct(
-    base_types: &[Path],
+    base_types: &[Base],
     attrs: &[Attribute],
     vis: &Visibility,
     name: &Ident,
     mod_: &Path,
     fields: &[Field]
 ) -> ItemStruct {
-    let base_type = sanitize_base_type(base_types[0].clone(), mod_);
+    let base_type = sanitize_base_type(base_types[0].ty.clone(), mod_);
     let base_field = Ident::new(&to_snake(base_type.segments.last().unwrap().ident.to_string()), Span::call_site());
     let attrs = build_attrs(attrs);
     let mut struct_: ItemStruct = parse_quote! {
@@ -801,13 +872,13 @@ fn build_struct(
     struct_
 }
 
-fn build_trait(base_types: &[Path], vis: &Visibility, class_name: &Ident, mod_: &Path) -> TokenStream {
-    let base_type = sanitize_base_type(base_types[0].clone(), mod_);
+fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, mod_: &Path) -> TokenStream {
+    let base_type = sanitize_base_type(base_types[0].ty.clone(), mod_);
     let base_field = Ident::new(
         &to_snake(base_type.segments.last().unwrap().ident.to_string()),
         Span::call_site()
     );
-    let mut base_trait = sanitize_base_type(base_types[0].clone(), mod_);
+    let mut base_trait = sanitize_base_type(base_types[0].ty.clone(), mod_);
     patch_path(&mut base_trait, |x| "T".to_string() + &x);
     let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
     let method_name = Ident::new(&to_snake(class_name.to_string()), Span::call_site());
@@ -826,14 +897,15 @@ fn build_trait(base_types: &[Path], vis: &Visibility, class_name: &Ident, mod_: 
     };
     for base_base_type in base_types.iter().skip(1) {
         let method_name = Ident::new(
-            &to_snake(base_base_type.segments.last().unwrap().ident.to_string()),
+            &to_snake(base_base_type.ty.segments.last().unwrap().ident.to_string()),
             Span::call_site()
         );
-        let mut base_base_trait = sanitize_base_type(base_base_type.clone(), mod_);
+        let mut base_base_trait = sanitize_base_type(base_base_type.ty.clone(), mod_);
         patch_path(&mut base_base_trait, |x| "T".to_string() + &x);
+        let base_base_type_ty = &base_base_type.ty;
         trait_.extend(quote! {
             impl #base_base_trait for #class_name {
-                fn #method_name(&self) -> &#base_base_type {
+                fn #method_name(&self) -> &#base_base_type_ty {
                     #base_base_trait::#method_name(&self.#base_field)
                 }
             }
@@ -850,7 +922,7 @@ fn build_trait(base_types: &[Path], vis: &Visibility, class_name: &Ident, mod_: 
     });
     traits_list.push(trait_path);
     for base_type in base_types {
-        let mut base_trait = sanitize_base_type(base_type.clone(), mod_);
+        let mut base_trait = sanitize_base_type(base_type.ty.clone(), mod_);
         patch_path(&mut base_trait, |x| "T".to_string() + &x);
         traits_list.push(base_trait);
     }
@@ -865,15 +937,15 @@ fn build_methods_enum(
     vis: &Visibility,
     class_name: &Ident,
     mod_: &Path,
-    methods: &[Field]
+    methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
     let mut base_methods_enum = sanitize_base_type(base_type.clone(), mod_);
     patch_path(&mut base_methods_enum, |x| x + "Methods");
     let methods_enum = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
     let mut values = TokenStream::new();
     values.append_terminated(
-        methods.iter().enumerate().map(|(i, method)| {
-            let name = Ident::new(&to_pascal(method.ident.as_ref().unwrap().to_string()), Span::call_site());
+        methods.iter().enumerate().map(|(i, (method_name, _method_ty))| {
+            let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
             let index = LitInt::new(&(i.to_string() + "usize"), Span::call_site());
             quote! {
                 #name = (#base_methods_enum::MethodsCount as usize) + #index
@@ -892,16 +964,18 @@ fn build_methods_enum(
     }
 }
 
+/*
 fn build_vtable() -> TokenStream {
 }
+*/
 
 fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
-    let new_inherited_from = build_inherited_from(&base_types, &class.name, &class.mod_);
+    let new_inherited_from = build_inherited_from(&base_types, &class.name, &class.mod_, &class.methods);
     let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.mod_, &class.fields);
     let trait_ = build_trait(&base_types, &class.vis, &class.name, &class.mod_);
-    let methods_enum = build_methods_enum(&base_types[0], &class.vis, &class.name, &class.mod_, &class.methods);
+    let methods_enum = build_methods_enum(&base_types[0].ty, &class.vis, &class.name, &class.mod_, &class.methods);
     Ok(quote! {
         #new_inherited_from
         #struct_

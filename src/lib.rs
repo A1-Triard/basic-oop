@@ -21,7 +21,7 @@ pub use dynamic_cast::SupportsInterfaces as dynamic_cast_SupportsInterfaces;
 pub use dynamic_cast::impl_supports_interfaces as dynamic_cast_impl_supports_interfaces;
 
 #[export_tokens_no_emit]
-struct inherited_from_Obj(::basic_oop::Obj);
+struct inherited_from_Obj { __class__: ::basic_oop::Obj }
 
 pub type Vtable = *const *const ();
 
