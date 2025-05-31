@@ -673,7 +673,7 @@ fn build_methods(
         let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
         let mut item: ImplItemFn = parse_quote! {
             #vis #signature {
-                let vtable = this.vtable();
+                let vtable = ::basic_oop::TObj::obj(this.as_ref()).vtable();
                 let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
                     *vtable.add(#methods_enum_name::#name as usize)
                 ) };
@@ -702,6 +702,15 @@ fn build_methods(
     }
 }
 
+fn build_vtable_const(class_name: &Ident) -> TokenStream {
+    let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let vtable_name = Ident::new(&(class_name.to_string() + "Vtable"), Span::call_site());
+    let const_name = Ident::new(&to_screaming_snake(vtable_name.to_string()), Span::call_site());
+    quote! {
+        const #const_name: [*const (); #methods_enum_name::MethodsCount as usize] = #vtable_name::new().0;
+    }
+}
+
 fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
@@ -712,6 +721,7 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
     let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
     let vtable = build_vtable(&base_types, &class.name, &class.mod_, &class.vis, &class.methods, &class.overrides);
     let methods = build_methods(&base_types, &class.vis, &class.name, &class.mod_, &class.methods);
+    let vtable_const = build_vtable_const(&class.name);
     Ok(quote! {
         #new_inherited_from
         #struct_
@@ -720,6 +730,7 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
         #consts_for_vtable
         #vtable
         #methods
+        #vtable_const
     })
 }
 
