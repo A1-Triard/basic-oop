@@ -9,6 +9,7 @@ use quote::{quote, TokenStreamExt, ToTokens};
 use syn::{parse_macro_input, parse_quote, ItemStruct, Path, Type, Fields, Meta, Attribute, Visibility, Ident};
 use syn::{Field, FieldMutability, TypePath, Token, PathSegment, PathArguments, LitInt, TypeBareFn, Expr};
 use syn::{BareFnArg, Generics, Signature, Pat, PatType, PatIdent, FnArg, ImplItemFn, Stmt, ExprPath};
+use syn::{Receiver, TypeReference};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
@@ -468,8 +469,8 @@ fn bare_fn_arg_to_fn_arg(a: &BareFnArg) -> FnArg {
     })
 }
 
-fn fn_signature(ty: &TypeBareFn, name: Ident) -> Signature {
-    Signature {
+fn method_signature(ty: &TypeBareFn, name: Ident) -> Signature {
+    let mut s = Signature {
         constness: None,
         asyncness: None,
         unsafety: None,
@@ -483,10 +484,38 @@ fn fn_signature(ty: &TypeBareFn, name: Ident) -> Signature {
             where_clause: None,
         },
         paren_token: ty.paren_token.clone(),
-        inputs: ty.inputs.iter().map(bare_fn_arg_to_fn_arg).collect(),
+        inputs: Punctuated::new(),
         variadic: None,
         output: ty.output.clone(),
+    };
+    let mut segments = Punctuated::new();
+    segments.push(PathSegment {
+        ident: Ident::new("Self", Span::call_site()),
+        arguments: PathArguments::None
+    });
+    s.inputs.push(FnArg::Receiver(Receiver {
+        attrs: Vec::new(),
+        reference: Some((<Token![&]>::default(), None)),
+        mutability: None,
+        self_token: <Token![self]>::default(),
+        colon_token: None,
+        ty: Box::new(Type::Reference(TypeReference {
+            and_token: <Token![&]>::default(),
+            lifetime: None,
+            mutability: None,
+            elem: Box::new(Type::Path(TypePath {
+                qself: None,
+                path: Path {
+                    leading_colon: None,
+                    segments
+                }
+            }))
+        }))
+    }));
+    for arg in ty.inputs.iter().skip(1) {
+        s.inputs.push(bare_fn_arg_to_fn_arg(arg));
     }
+    s
 }
 
 fn build_vtable(
@@ -629,7 +658,6 @@ fn build_vtable(
 
 fn build_methods(
     base_types: &[Base],
-    vis: &Visibility,
     class_name: &Ident,
     class_mod: &Path,
     methods: &[(Ident, TypeBareFn)]
@@ -640,14 +668,16 @@ fn build_methods(
         let base_type_ty = sanitize_base_type(base_type.ty.clone(), class_mod);
         let mut base_trait = base_type_ty.clone();
         patch_path(&mut base_trait, |x| "T".to_string() + &x);
+        let mut base_trait_ext = base_type_ty.clone();
+        patch_path(&mut base_trait_ext, |x| x + "Ext");
         for (method_name, method_ty) in &base_type.methods {
             let ty = actual_method_ty(method_ty.clone(), class_name);
-            let signature = fn_signature(&ty, method_name.clone());
+            let signature = method_signature(&ty, method_name.clone());
             let mut item: ImplItemFn = parse_quote! {
-                #vis #signature {
+                #signature {
                     let this: ::basic_oop::alloc_sync_Arc<dyn #base_trait>
-                        = ::basic_oop::dynamic_cast_dyn_cast_arc(this.clone()).unwrap();
-                    #base_type_ty::#method_name(&this)
+                        = ::basic_oop::dynamic_cast_dyn_cast_arc(self.clone()).unwrap();
+                    #base_trait_ext::#method_name(&this)
                 }
             };
             let Stmt::Expr(Expr::Call(call), _) = item.block.stmts.last_mut().unwrap() else { panic!() };
@@ -668,20 +698,20 @@ fn build_methods(
     }
     for (method_name, method_ty) in methods {
         let ty = actual_method_ty(method_ty.clone(), class_name);
-        let signature = fn_signature(&ty, method_name.clone());
+        let signature = method_signature(&ty, method_name.clone());
         let ty_without_idents = fn_ty_without_idents(ty.clone());
         let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
         let mut item: ImplItemFn = parse_quote! {
-            #vis #signature {
-                let vtable = ::basic_oop::TObj::obj(this.as_ref()).vtable();
+            #signature {
+                let vtable = ::basic_oop::TObj::obj(self.as_ref()).vtable();
                 let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
                     *vtable.add(#methods_enum_name::#name as usize)
                 ) };
-                method()
+                method(self)
             }
         };
         let Stmt::Expr(Expr::Call(call), _) = item.block.stmts.last_mut().unwrap() else { panic!() };
-        for arg in ty.inputs {
+        for arg in ty.inputs.into_iter().skip(1) {
             let mut segments = Punctuated::new();
             segments.push(PathSegment {
                 ident: arg.name.unwrap().0,
@@ -695,8 +725,10 @@ fn build_methods(
         }
         item.to_tokens(&mut methods_tokens);
     }
+    let trait_name = Ident::new(&(class_name.to_string() + "Ext"), Span::call_site());
+    let t = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
     quote! {
-        impl #class_name {
+        impl #trait_name for ::basic_oop::alloc_sync_Arc<dyn #t> {
             #methods_tokens
         }
     }
@@ -711,6 +743,35 @@ fn build_vtable_const(class_name: &Ident) -> TokenStream {
     }
 }
 
+fn build_call_trait(
+    base_types: &[Base],
+    vis: &Visibility,
+    class_name: &Ident,
+    methods: &[(Ident, TypeBareFn)]
+) -> TokenStream {
+    let mut methods_tokens = TokenStream::new();
+    for base_type in base_types {
+        for (method_name, method_ty) in &base_type.methods {
+            let ty = actual_method_ty(method_ty.clone(), class_name);
+            let signature = method_signature(&ty, method_name.clone());
+            signature.to_tokens(&mut methods_tokens);
+            <Token![;]>::default().to_tokens(&mut methods_tokens);
+        }
+    }
+    for (method_name, method_ty) in methods {
+        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let signature = method_signature(&ty, method_name.clone());
+        signature.to_tokens(&mut methods_tokens);
+        <Token![;]>::default().to_tokens(&mut methods_tokens);
+    }
+    let trait_name = Ident::new(&(class_name.to_string() + "Ext"), Span::call_site());
+    quote! {
+        #vis trait #trait_name {
+            #methods_tokens
+        }
+    }
+}
+
 fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
@@ -720,8 +781,9 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
     let methods_enum = build_methods_enum(&base_types[0].ty, &class.vis, &class.name, &class.mod_, &class.methods);
     let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
     let vtable = build_vtable(&base_types, &class.name, &class.mod_, &class.vis, &class.methods, &class.overrides);
-    let methods = build_methods(&base_types, &class.vis, &class.name, &class.mod_, &class.methods);
     let vtable_const = build_vtable_const(&class.name);
+    let call_trait = build_call_trait(&base_types, &class.vis, &class.name, &class.methods);
+    let methods = build_methods(&base_types, &class.name, &class.mod_, &class.methods);
     Ok(quote! {
         #new_inherited_from
         #struct_
@@ -729,8 +791,9 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
         #methods_enum
         #consts_for_vtable
         #vtable
-        #methods
         #vtable_const
+        #call_trait
+        #methods
     })
 }
 
