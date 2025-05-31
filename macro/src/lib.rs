@@ -9,12 +9,44 @@ use quote::{quote, TokenStreamExt, ToTokens};
 use syn::{parse_macro_input, parse_quote, ItemStruct, Path, Type, Fields, Meta, Attribute, Visibility, Ident};
 use syn::{Field, FieldMutability, TypePath, Token, PathSegment, PathArguments, LitInt, TypeBareFn, Expr};
 use syn::{BareFnArg, Generics, Signature, Pat, PatType, PatIdent, FnArg, ImplItemFn, Stmt, ExprPath};
-use syn::{Receiver, TypeReference};
+use syn::{Receiver, TypeReference, AttrStyle};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
+use syn::token::Bracket;
+
+fn parse_base_field_meta(meta: &Meta) -> bool {
+    match meta {
+        Meta::Path(path) if
+               path.leading_colon.is_none()
+            && path.segments.len() == 1
+            && path.segments[0].arguments.is_none()
+        => match path.segments[0].ident.to_string().as_ref() {
+            "non_virt" => false,
+            _ => true
+        },
+        _ => true
+    }
+}
+
+fn parse_base_field_attrs(attrs: &[Attribute]) -> Result<bool, Diagnostic> {
+    let mut is_virtual = true;
+    for attr in attrs {
+        if !parse_base_field_meta(&attr.meta) {
+            if !is_virtual {
+                return Err(
+                     attr.span()
+                    .error("invalid base class")
+                );
+            }
+            is_virtual = false;
+        }
+    }
+    Ok(is_virtual)
+}
 
 struct Base {
     ty: Path,
+    non_virt_methods: Vec<(Ident, TypeBareFn)>,
     virt_methods: Vec<(Ident, TypeBareFn)>,
 }
 
@@ -37,6 +69,7 @@ fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic>
             }
             base = Some(Base {
                 ty: type_path.path,
+                non_virt_methods: Vec::new(),
                 virt_methods: Vec::new()
             });
         } else {
@@ -47,7 +80,11 @@ fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic>
             let Some(base) = base.as_mut() else {
                 return Err(type_fn.span().error("invalid base class"));
             };
-            base.virt_methods.push((name, type_fn));
+            if parse_base_field_attrs(&field.attrs)? {
+                base.virt_methods.push((name, type_fn));
+            } else {
+                base.non_virt_methods.push((name, type_fn));
+            }
         }
     }
     if let Some(base) = base.take() {
@@ -58,6 +95,7 @@ fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic>
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum FieldKind {
+    NonVirtMethod,
     VirtMethod,
     Override,
     Data,
@@ -70,6 +108,7 @@ fn parse_field_meta(meta: &Meta) -> FieldKind {
             && path.segments.len() == 1
             && path.segments[0].arguments.is_none()
         => match path.segments[0].ident.to_string().as_ref() {
+            "non_virt" => FieldKind::NonVirtMethod,
             "virt" => FieldKind::VirtMethod,
             "over" => FieldKind::Override,
             _ => FieldKind::Data,
@@ -83,11 +122,20 @@ fn parse_field_attrs(attrs: &[Attribute]) -> Result<FieldKind, Diagnostic> {
     for attr in attrs {
         match parse_field_meta(&attr.meta) {
             FieldKind::Data => { },
+            FieldKind::NonVirtMethod => {
+                if kind != FieldKind::Data {
+                    return Err(
+                         attr.span()
+                        .error("only one of 'non_virt'/'virt'/'over' attributes can be specified for a field")
+                    );
+                }
+                kind = FieldKind::NonVirtMethod;
+            },
             FieldKind::VirtMethod => {
                 if kind != FieldKind::Data {
                     return Err(
                          attr.span()
-                        .error("only one of 'virt'/'over' attributes can be specified for a field")
+                        .error("only one of 'non_virt'/'virt'/'over' attributes can be specified for a field")
                     );
                 }
                 kind = FieldKind::VirtMethod;
@@ -96,7 +144,7 @@ fn parse_field_attrs(attrs: &[Attribute]) -> Result<FieldKind, Diagnostic> {
                 if kind != FieldKind::Data {
                     return Err(
                          attr.span()
-                        .error("only one of 'virt'/'over' attributes can be specified for a field")
+                        .error("only one of 'non_virt'/'virt'/'over' attributes can be specified for a field")
                     );
                 }
                 kind = FieldKind::Override;
@@ -112,6 +160,7 @@ struct Class {
     name: Ident,
     mod_: Path,
     fields: Vec<Field>,
+    non_virt_methods: Vec<(Ident, TypeBareFn)>,
     virt_methods: Vec<(Ident, TypeBareFn)>,
     overrides: Vec<Ident>,
 }
@@ -123,6 +172,7 @@ impl Class {
         }
         let mut mod_ = None;
         let mut fields = Vec::new();
+        let mut non_virt_methods = Vec::new();
         let mut virt_methods = Vec::new();
         let mut overrides = Vec::new();
         let Fields::Named(descr_fields) = descr.fields else {
@@ -158,6 +208,28 @@ impl Class {
             } else {
                 match parse_field_attrs(&field.attrs)? {
                     FieldKind::Data => fields.push(field.clone()),
+                    FieldKind::NonVirtMethod => {
+                        let name = field.ident.clone().unwrap();
+                        if name.to_string() == "__class__" {
+                            return Err(name.span().error("this name is reserved"));
+                        }
+                        let Type::BareFn(type_fn) = &field.ty else {
+                            return Err(field.ty.span().error("invalid non-virtual method type"));
+                        };
+                        if
+                               type_fn.lifetimes.is_some()
+                            || type_fn.unsafety.is_some()
+                            || type_fn.abi.is_some()
+                            || type_fn.variadic.is_some()
+                            || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
+                        {
+                            return Err(field.ty.span().error("invalid non-virtual method type"));
+                        }
+                        if let Some(arg) = type_fn.inputs.iter().find(|x| x.name.is_none()) {
+                            return Err(arg.span().error("argument name required"));
+                        }
+                        non_virt_methods.push((name, type_fn.clone()));
+                    },
                     FieldKind::VirtMethod => {
                         let name = field.ident.clone().unwrap();
                         if name.to_string() == "__class__" {
@@ -208,6 +280,7 @@ impl Class {
             name: descr.ident,
             mod_,
             fields,
+            non_virt_methods,
             virt_methods,
             overrides,
         })
@@ -218,6 +291,7 @@ fn build_inherited_from(
     base_types: &[Base],
     class_name: &Ident,
     class_mod: &Path,
+    non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> ItemStruct {
     let name = Ident::new(&("inherited_from_".to_string() + &class_name.to_string()), Span::call_site());
@@ -228,6 +302,26 @@ fn build_inherited_from(
         }
     };
     let Fields::Named(fields) = &mut struct_.fields else { panic!() };
+    for (method_name, method_ty) in non_virt_methods {
+        let mut segments = Punctuated::new();
+        segments.push(PathSegment {
+            ident: Ident::new("non_virt", Span::call_site()),
+            arguments: PathArguments::None
+        });
+        fields.named.push(Field {
+            attrs: vec![Attribute {
+                pound_token: <Token![#]>::default(),
+                style: AttrStyle::Outer,
+                bracket_token: Bracket::default(),
+                meta: Meta::Path(Path { leading_colon: None, segments }),
+            }],
+            vis: Visibility::Inherited,
+            mutability: FieldMutability::None,
+            ident: Some(method_name.clone()),
+            colon_token: Some(<Token![:]>::default()),
+            ty: Type::BareFn(method_ty.clone()),
+        });
+    }
     for (method_name, method_ty) in virt_methods {
         fields.named.push(Field {
             attrs: Vec::new(),
@@ -250,6 +344,26 @@ fn build_inherited_from(
                 path: base_type.ty.clone()
             }),
         });
+        for (method_name, method_ty) in &base_type.non_virt_methods {
+            let mut segments = Punctuated::new();
+            segments.push(PathSegment {
+                ident: Ident::new("non_virt", Span::call_site()),
+                arguments: PathArguments::None
+            });
+            fields.named.push(Field {
+                attrs: vec![Attribute {
+                    pound_token: <Token![#]>::default(),
+                    style: AttrStyle::Outer,
+                    bracket_token: Bracket::default(),
+                    meta: Meta::Path(Path { leading_colon: None, segments }),
+                }],
+                vis: Visibility::Inherited,
+                mutability: FieldMutability::None,
+                ident: Some(method_name.clone()),
+                colon_token: Some(<Token![:]>::default()),
+                ty: Type::BareFn(method_ty.clone()),
+            });
+        }
         for (method_name, method_ty) in &base_type.virt_methods {
             fields.named.push(Field {
                 attrs: Vec::new(),
@@ -660,6 +774,7 @@ fn build_methods(
     base_types: &[Base],
     class_name: &Ident,
     class_mod: &Path,
+    non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
     let methods_enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
@@ -670,7 +785,7 @@ fn build_methods(
         patch_path(&mut base_trait, |x| "T".to_string() + &x);
         let mut base_trait_ext = base_type_ty.clone();
         patch_path(&mut base_trait_ext, |x| x + "Ext");
-        for (method_name, method_ty) in &base_type.virt_methods {
+        for (method_name, method_ty) in base_type.non_virt_methods.iter().chain(base_type.virt_methods.iter()) {
             let ty = actual_method_ty(method_ty.clone(), class_name);
             let signature = method_signature(&ty, method_name.clone());
             let mut item: ImplItemFn = parse_quote! {
@@ -695,6 +810,30 @@ fn build_methods(
             }
             item.to_tokens(&mut methods_tokens);
         }
+    }
+    for (method_name, method_ty) in non_virt_methods {
+        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let signature = method_signature(&ty, method_name.clone());
+        let name = Ident::new(&(method_name.to_string() + "_impl"), Span::call_site());
+        let mut item: ImplItemFn = parse_quote! {
+            #signature {
+                #class_name::#name(self)
+            }
+        };
+        let Stmt::Expr(Expr::Call(call), _) = item.block.stmts.last_mut().unwrap() else { panic!() };
+        for arg in ty.inputs.into_iter().skip(1) {
+            let mut segments = Punctuated::new();
+            segments.push(PathSegment {
+                ident: arg.name.unwrap().0,
+                arguments: PathArguments::None,
+            });
+            call.args.push(Expr::Path(ExprPath {
+                attrs: Vec::new(),
+                qself: None,
+                path: Path { leading_colon: None, segments },
+            }));
+        }
+        item.to_tokens(&mut methods_tokens);
     }
     for (method_name, method_ty) in virt_methods {
         let ty = actual_method_ty(method_ty.clone(), class_name);
@@ -747,18 +886,19 @@ fn build_call_trait(
     base_types: &[Base],
     vis: &Visibility,
     class_name: &Ident,
+    non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
     let mut methods_tokens = TokenStream::new();
     for base_type in base_types {
-        for (method_name, method_ty) in &base_type.virt_methods {
+        for (method_name, method_ty) in base_type.non_virt_methods.iter().chain(base_type.virt_methods.iter()) {
             let ty = actual_method_ty(method_ty.clone(), class_name);
             let signature = method_signature(&ty, method_name.clone());
             signature.to_tokens(&mut methods_tokens);
             <Token![;]>::default().to_tokens(&mut methods_tokens);
         }
     }
-    for (method_name, method_ty) in virt_methods {
+    for (method_name, method_ty) in non_virt_methods.iter().chain(virt_methods.iter()) {
         let ty = actual_method_ty(method_ty.clone(), class_name);
         let signature = method_signature(&ty, method_name.clone());
         signature.to_tokens(&mut methods_tokens);
@@ -775,7 +915,9 @@ fn build_call_trait(
 fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
-    let new_inherited_from = build_inherited_from(&base_types, &class.name, &class.mod_, &class.virt_methods);
+    let new_inherited_from = build_inherited_from(
+        &base_types, &class.name, &class.mod_, &class.non_virt_methods, &class.virt_methods
+    );
     let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.mod_, &class.fields);
     let trait_ = build_trait(&base_types, &class.vis, &class.name, &class.mod_);
     let methods_enum = build_virt_methods_enum(
@@ -786,8 +928,12 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
         &base_types, &class.name, &class.mod_, &class.vis, &class.virt_methods, &class.overrides
     );
     let vtable_const = build_vtable_const(&class.name);
-    let call_trait = build_call_trait(&base_types, &class.vis, &class.name, &class.virt_methods);
-    let methods = build_methods(&base_types, &class.name, &class.mod_, &class.virt_methods);
+    let call_trait = build_call_trait(
+        &base_types, &class.vis, &class.name, &class.non_virt_methods, &class.virt_methods
+    );
+    let methods = build_methods(
+        &base_types, &class.name, &class.mod_, &class.non_virt_methods, &class.virt_methods
+    );
     Ok(quote! {
         #new_inherited_from
         #struct_
