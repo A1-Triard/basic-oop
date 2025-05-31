@@ -582,10 +582,10 @@ use iter_identify_first_last::IteratorIdentifyFirstLastExt;
 use macro_magic::import_tokens_attr;
 use proc_macro2::{TokenStream, Span};
 use proc_macro2_diagnostics::{Diagnostic, SpanDiagnosticExt};
-use quote::{quote, TokenStreamExt};
+use quote::{quote, TokenStreamExt, ToTokens};
 use syn::{parse_macro_input, parse_quote, ItemStruct, Path, Type, Fields, Meta, Attribute, Visibility, Ident};
 use syn::{Field, FieldMutability, TypePath, Token, PathSegment, PathArguments, LitInt, TypeBareFn, Expr};
-use syn::BareFnArg;
+use syn::{BareFnArg, Generics, Signature, Pat, PatType, PatIdent, FnArg, ImplItemFn, Stmt, ExprPath};
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
@@ -742,8 +742,17 @@ impl Class {
                         let Type::BareFn(type_fn) = &field.ty else {
                             return Err(field.ty.span().error("invalid virtual method type"));
                         };
-                        if type_fn.lifetimes.is_some() || type_fn.unsafety.is_some() || type_fn.abi.is_some() {
+                        if
+                               type_fn.lifetimes.is_some()
+                            || type_fn.unsafety.is_some()
+                            || type_fn.abi.is_some()
+                            || type_fn.variadic.is_some()
+                            || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
+                        {
                             return Err(field.ty.span().error("invalid virtual method type"));
+                        }
+                        if let Some(arg) = type_fn.inputs.iter().find(|x| x.name.is_none()) {
+                            return Err(arg.span().error("argument name required"));
                         }
                         methods.push((name, type_fn.clone()));
                     },
@@ -1020,11 +1029,10 @@ fn fn_ty_without_idents(mut ty: TypeBareFn) -> TypeBareFn {
     ty
 }
 
-/*
-fn bare_fn_arg_to_fn_arg(a: &BareFnArg) -> Result<FnArg, Diagnostic> {
-    let Some((name, colon_token)) = &a.name else { return Err(a.span().error("argument name required")); }; 
-    Ok(FnArg::Typed(PatType {
-        attrs: a.attrs.clone(),
+fn bare_fn_arg_to_fn_arg(a: &BareFnArg) -> FnArg {
+    let Some((name, colon_token)) = &a.name else { panic!() }; 
+    FnArg::Typed(PatType {
+        attrs: Vec::new(),
         pat: Box::new(Pat::Ident(PatIdent {
             attrs: Vec::new(),
             by_ref: None,
@@ -1034,11 +1042,11 @@ fn bare_fn_arg_to_fn_arg(a: &BareFnArg) -> Result<FnArg, Diagnostic> {
         })),
         colon_token: colon_token.clone(),
         ty: Box::new(a.ty.clone()),
-    }))
+    })
 }
 
-fn fn_signature(ty: &TypeBareFn, name: Ident) -> Result<Signature, Diagnostic> {
-    Ok(Signature {
+fn fn_signature(ty: &TypeBareFn, name: Ident) -> Signature {
+    Signature {
         constness: None,
         asyncness: None,
         unsafety: None,
@@ -1052,12 +1060,11 @@ fn fn_signature(ty: &TypeBareFn, name: Ident) -> Result<Signature, Diagnostic> {
             where_clause: None,
         },
         paren_token: ty.paren_token.clone(),
-        inputs: ty.inputs.iter().map(bare_fn_arg_to_fn_arg).process_results(|i| i.collect())?,
+        inputs: ty.inputs.iter().map(bare_fn_arg_to_fn_arg).collect(),
         variadic: None,
         output: ty.output.clone(),
-    })
+    }
 }
-*/
 
 fn build_vtable(
     base_types: &[Base],
@@ -1197,6 +1204,52 @@ fn build_vtable(
     }
 }
 
+fn build_methods(
+    base_types: &[Base],
+    vis: &Visibility,
+    class_name: &Ident,
+    class_mod: &Path,
+    methods: &[(Ident, TypeBareFn)]
+) -> TokenStream {
+    let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
+    let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let mut methods_tokens = TokenStream::new();
+    for (method_name, method_ty) in methods {
+        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let signature = fn_signature(&ty, method_name.clone());
+        let ty_without_idents = fn_ty_without_idents(ty.clone());
+        let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
+        let mut item: ImplItemFn = parse_quote! {
+            #vis #signature {
+                let vtable = this.vtable();
+                let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
+                    *vtable.add(#methods_enum_name::#name as usize)
+                ) };
+                method()
+            }
+        };
+        let Stmt::Expr(Expr::Call(call), _) = item.block.stmts.last_mut().unwrap() else { panic!() };
+        for arg in ty.inputs {
+            let mut segments = Punctuated::new();
+            segments.push(PathSegment {
+                ident: arg.name.unwrap().0,
+                arguments: PathArguments::None,
+            });
+            call.args.push(Expr::Path(ExprPath {
+                attrs: Vec::new(),
+                qself: None,
+                path: Path { leading_colon: None, segments },
+            }));
+        }
+        item.to_tokens(&mut methods_tokens);
+    }
+    quote! {
+        impl #class_name {
+            #methods_tokens
+        }
+    }
+}
+
 fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
@@ -1206,6 +1259,7 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
     let methods_enum = build_methods_enum(&base_types[0].ty, &class.vis, &class.name, &class.mod_, &class.methods);
     let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
     let vtable = build_vtable(&base_types, &class.name, &class.mod_, &class.vis, &class.methods, &class.overrides);
+    let methods = build_methods(&base_types, &class.vis, &class.name, &class.mod_, &class.methods);
     Ok(quote! {
         #new_inherited_from
         #struct_
@@ -1213,6 +1267,7 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
         #methods_enum
         #consts_for_vtable
         #vtable
+        #methods
     })
 }
 
