@@ -15,7 +15,7 @@ use syn::spanned::Spanned;
 
 struct Base {
     ty: Path,
-    methods: Vec<(Ident, TypeBareFn)>,
+    virt_methods: Vec<(Ident, TypeBareFn)>,
 }
 
 fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic> {
@@ -37,7 +37,7 @@ fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic>
             }
             base = Some(Base {
                 ty: type_path.path,
-                methods: Vec::new()
+                virt_methods: Vec::new()
             });
         } else {
             let name = field.ident.as_ref().unwrap().clone();
@@ -47,7 +47,7 @@ fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic>
             let Some(base) = base.as_mut() else {
                 return Err(type_fn.span().error("invalid base class"));
             };
-            base.methods.push((name, type_fn));
+            base.virt_methods.push((name, type_fn));
         }
     }
     if let Some(base) = base.take() {
@@ -58,7 +58,7 @@ fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic>
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 enum FieldKind {
-    Method,
+    VirtMethod,
     Override,
     Data,
 }
@@ -70,7 +70,7 @@ fn parse_field_meta(meta: &Meta) -> FieldKind {
             && path.segments.len() == 1
             && path.segments[0].arguments.is_none()
         => match path.segments[0].ident.to_string().as_ref() {
-            "virt" => FieldKind::Method,
+            "virt" => FieldKind::VirtMethod,
             "over" => FieldKind::Override,
             _ => FieldKind::Data,
         },
@@ -83,14 +83,14 @@ fn parse_field_attrs(attrs: &[Attribute]) -> Result<FieldKind, Diagnostic> {
     for attr in attrs {
         match parse_field_meta(&attr.meta) {
             FieldKind::Data => { },
-            FieldKind::Method => {
+            FieldKind::VirtMethod => {
                 if kind != FieldKind::Data {
                     return Err(
                          attr.span()
                         .error("only one of 'virt'/'over' attributes can be specified for a field")
                     );
                 }
-                kind = FieldKind::Method;
+                kind = FieldKind::VirtMethod;
             },
             FieldKind::Override => {
                 if kind != FieldKind::Data {
@@ -112,7 +112,7 @@ struct Class {
     name: Ident,
     mod_: Path,
     fields: Vec<Field>,
-    methods: Vec<(Ident, TypeBareFn)>,
+    virt_methods: Vec<(Ident, TypeBareFn)>,
     overrides: Vec<Ident>,
 }
 
@@ -123,7 +123,7 @@ impl Class {
         }
         let mut mod_ = None;
         let mut fields = Vec::new();
-        let mut methods = Vec::new();
+        let mut virt_methods = Vec::new();
         let mut overrides = Vec::new();
         let Fields::Named(descr_fields) = descr.fields else {
             return Err(descr.fields.span().error("class should be described as struct with named fields"));
@@ -158,7 +158,7 @@ impl Class {
             } else {
                 match parse_field_attrs(&field.attrs)? {
                     FieldKind::Data => fields.push(field.clone()),
-                    FieldKind::Method => {
+                    FieldKind::VirtMethod => {
                         let name = field.ident.clone().unwrap();
                         if name.to_string() == "__class__" {
                             return Err(name.span().error("this name is reserved"));
@@ -178,7 +178,7 @@ impl Class {
                         if let Some(arg) = type_fn.inputs.iter().find(|x| x.name.is_none()) {
                             return Err(arg.span().error("argument name required"));
                         }
-                        methods.push((name, type_fn.clone()));
+                        virt_methods.push((name, type_fn.clone()));
                     },
                     FieldKind::Override => {
                         let name = field.ident.clone().unwrap();
@@ -208,7 +208,7 @@ impl Class {
             name: descr.ident,
             mod_,
             fields,
-            methods,
+            virt_methods,
             overrides,
         })
     }
@@ -218,7 +218,7 @@ fn build_inherited_from(
     base_types: &[Base],
     class_name: &Ident,
     class_mod: &Path,
-    methods: &[(Ident, TypeBareFn)]
+    virt_methods: &[(Ident, TypeBareFn)]
 ) -> ItemStruct {
     let name = Ident::new(&("inherited_from_".to_string() + &class_name.to_string()), Span::call_site());
     let mut struct_: ItemStruct = parse_quote! {
@@ -228,7 +228,7 @@ fn build_inherited_from(
         }
     };
     let Fields::Named(fields) = &mut struct_.fields else { panic!() };
-    for (method_name, method_ty) in methods {
+    for (method_name, method_ty) in virt_methods {
         fields.named.push(Field {
             attrs: Vec::new(),
             vis: Visibility::Inherited,
@@ -250,7 +250,7 @@ fn build_inherited_from(
                 path: base_type.ty.clone()
             }),
         });
-        for (method_name, method_ty) in &base_type.methods {
+        for (method_name, method_ty) in &base_type.virt_methods {
             fields.named.push(Field {
                 attrs: Vec::new(),
                 vis: Visibility::Inherited,
@@ -368,56 +368,56 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, mod_: 
     trait_
 }
 
-fn build_methods_enum(
+fn build_virt_methods_enum(
     base_type: &Path,
     vis: &Visibility,
     class_name: &Ident,
     mod_: &Path,
-    methods: &[(Ident, TypeBareFn)]
+    virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
     let mut base_methods_enum = sanitize_base_type(base_type.clone(), mod_);
-    patch_path(&mut base_methods_enum, |x| x + "Methods");
-    let methods_enum = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    patch_path(&mut base_methods_enum, |x| x + "VirtMethods");
+    let methods_enum = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut values = TokenStream::new();
     values.append_terminated(
-        methods.iter().enumerate().map(|(i, (method_name, _method_ty))| {
+        virt_methods.iter().enumerate().map(|(i, (method_name, _method_ty))| {
             let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
             let index = LitInt::new(&(i.to_string() + "usize"), Span::call_site());
             quote! {
-                #name = (#base_methods_enum::MethodsCount as usize) + #index
+                #name = (#base_methods_enum::VirtMethodsCount as usize) + #index
             }
         }),
         <Token![,]>::default()
     );
-    let count = methods.len();
+    let count = virt_methods.len();
     quote! {
         #[derive(Debug, Eq, PartialEq, Clone, Copy, Ord, PartialOrd, Hash)]
         #[repr(usize)]
         #vis enum #methods_enum {
             #values
-            MethodsCount = (#base_methods_enum::MethodsCount as usize) + #count
+            VirtMethodsCount = (#base_methods_enum::VirtMethodsCount as usize) + #count
         }
     }
 }
 
 fn build_consts_for_vtable(class_name: &Ident, class_mod: &Path, base_types: &[Base]) -> TokenStream {
-    let enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut tokens = TokenStream::new();
     for base_type in base_types {
         let mut base_methods_enum = sanitize_base_type(base_type.ty.clone(), class_mod);
-        patch_path(&mut base_methods_enum, |x| x + "Methods");
+        patch_path(&mut base_methods_enum, |x| x + "VirtMethods");
         let base_const_name = Ident::new(
             &(
                 to_screaming_snake(
                     class_name.to_string() + &base_type.ty.segments.last().unwrap().ident.to_string()
-                ) + "_METHODS_COUNT"
+                ) + "_VIRT_METHODS_COUNT"
             ),
             Span::call_site()
         );
         let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
         tokens.extend(quote! {
-            const #base_const_name: usize = #base_methods_enum::MethodsCount as usize;
-            const #complement_const_name: usize = (#enum_name::MethodsCount as usize) - #base_const_name;
+            const #base_const_name: usize = #base_methods_enum::VirtMethodsCount as usize;
+            const #complement_const_name: usize = (#enum_name::VirtMethodsCount as usize) - #base_const_name;
         });
     }
     tokens
@@ -523,16 +523,16 @@ fn build_vtable(
     class_name: &Ident,
     class_mod: &Path,
     vis: &Visibility,
-    methods: &[(Ident, TypeBareFn)],
+    virt_methods: &[(Ident, TypeBareFn)],
     overrides: &[Ident],
 ) -> TokenStream {
     let vtable_name = Ident::new(&(class_name.to_string() + "Vtable"), Span::call_site());
-    let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let methods_enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let struct_ = quote! {
-        #vis struct #vtable_name(pub [*const (); #methods_enum_name::MethodsCount as usize]);
+        #vis struct #vtable_name(pub [*const (); #methods_enum_name::VirtMethodsCount as usize]);
     };
     let mut methods_impl = TokenStream::new();
-    methods_impl.append_separated(methods.iter().map(|(m, _)| {
+    methods_impl.append_separated(virt_methods.iter().map(|(m, _)| {
         let impl_name = Ident::new(&(m.to_string() + "_impl"), Span::call_site());
         quote! { #class_name::#impl_name as *const () }
     }), <Token![,]>::default());
@@ -550,7 +550,7 @@ fn build_vtable(
         &(
             to_screaming_snake(
                 class_name.to_string() + &base_types[0].ty.segments.last().unwrap().ident.to_string()
-            ) + "_METHODS_COUNT"
+            ) + "_VIRT_METHODS_COUNT"
         ),
         Span::call_site()
     );
@@ -563,12 +563,12 @@ fn build_vtable(
             &(
                 to_screaming_snake(
                     class_name.to_string() + &base_type.ty.segments.last().unwrap().ident.to_string()
-                ) + "_METHODS_COUNT"
+                ) + "_VIRT_METHODS_COUNT"
             ),
             Span::call_site()
         );
         let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
-        for (base_method, base_method_ty) in &base_type.methods {
+        for (base_method, base_method_ty) in &base_type.virt_methods {
             let ty = actual_base_method_ty(base_method_ty.clone(), &base_type.ty, class_mod);
             let ty_without_idents = fn_ty_without_idents(ty);
             base_methods.extend(quote! {
@@ -577,7 +577,7 @@ fn build_vtable(
                     f: #ty_without_idents
                 ) -> Self {
                     let vtable = unsafe { ::basic_oop::core_mem_transmute::<
-                        [*const (); #methods_enum_name::MethodsCount as usize],
+                        [*const (); #methods_enum_name::VirtMethodsCount as usize],
                         ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>
                     >(self.0) };
                     let vtable: ::basic_oop::VtableJoin<
@@ -589,14 +589,14 @@ fn build_vtable(
                     };
                     #vtable_name(unsafe { ::basic_oop::core_mem_transmute::<
                         ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>,
-                        [*const (); #methods_enum_name::MethodsCount as usize]
+                        [*const (); #methods_enum_name::VirtMethodsCount as usize]
                     >(vtable) })
                 }
             });
         }
     }
     let mut methods_tokens = TokenStream::new();
-    for (method_index, (method_name, method_ty)) in methods.iter().enumerate() {
+    for (method_index, (method_name, method_ty)) in virt_methods.iter().enumerate() {
         let ty = actual_method_ty(method_ty.clone(), class_name);
         let ty_without_idents = fn_ty_without_idents(ty);
         let mut list: Punctuated<Expr, Token![,]> = Punctuated::new();
@@ -605,7 +605,7 @@ fn build_vtable(
             list.push(parse_quote! { vtable.b[#index] });
         }
         list.push(parse_quote! { f as *const () });
-        for i in method_index + 1 .. methods.len() {
+        for i in method_index + 1 .. virt_methods.len() {
             let index = LitInt::new(&(i.to_string() + "usize"), Span::call_site());
             list.push(parse_quote! { vtable.b[#index] });
         }
@@ -615,7 +615,7 @@ fn build_vtable(
                 f: #ty_without_idents
             ) -> Self {
                 let vtable = unsafe { ::basic_oop::core_mem_transmute::<
-                    [*const (); #methods_enum_name::MethodsCount as usize],
+                    [*const (); #methods_enum_name::VirtMethodsCount as usize],
                     ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>
                 >(self.0) };
                 let vtable: ::basic_oop::VtableJoin<
@@ -627,7 +627,7 @@ fn build_vtable(
                 };
                 #vtable_name(unsafe { ::basic_oop::core_mem_transmute::<
                     ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>,
-                    [*const (); #methods_enum_name::MethodsCount as usize]
+                    [*const (); #methods_enum_name::VirtMethodsCount as usize]
                 >(vtable) })
             }
         });
@@ -646,7 +646,7 @@ fn build_vtable(
                 };
                 #vtable_name(unsafe { ::basic_oop::core_mem_transmute::<
                     ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>,
-                    [*const (); #methods_enum_name::MethodsCount as usize]
+                    [*const (); #methods_enum_name::VirtMethodsCount as usize]
                 >(vtable) })
             }
 
@@ -660,9 +660,9 @@ fn build_methods(
     base_types: &[Base],
     class_name: &Ident,
     class_mod: &Path,
-    methods: &[(Ident, TypeBareFn)]
+    virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
-    let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let methods_enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut methods_tokens = TokenStream::new();
     for base_type in base_types {
         let base_type_ty = sanitize_base_type(base_type.ty.clone(), class_mod);
@@ -670,7 +670,7 @@ fn build_methods(
         patch_path(&mut base_trait, |x| "T".to_string() + &x);
         let mut base_trait_ext = base_type_ty.clone();
         patch_path(&mut base_trait_ext, |x| x + "Ext");
-        for (method_name, method_ty) in &base_type.methods {
+        for (method_name, method_ty) in &base_type.virt_methods {
             let ty = actual_method_ty(method_ty.clone(), class_name);
             let signature = method_signature(&ty, method_name.clone());
             let mut item: ImplItemFn = parse_quote! {
@@ -696,7 +696,7 @@ fn build_methods(
             item.to_tokens(&mut methods_tokens);
         }
     }
-    for (method_name, method_ty) in methods {
+    for (method_name, method_ty) in virt_methods {
         let ty = actual_method_ty(method_ty.clone(), class_name);
         let signature = method_signature(&ty, method_name.clone());
         let ty_without_idents = fn_ty_without_idents(ty.clone());
@@ -735,11 +735,11 @@ fn build_methods(
 }
 
 fn build_vtable_const(class_name: &Ident) -> TokenStream {
-    let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let methods_enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let vtable_name = Ident::new(&(class_name.to_string() + "Vtable"), Span::call_site());
     let const_name = Ident::new(&to_screaming_snake(vtable_name.to_string()), Span::call_site());
     quote! {
-        const #const_name: [*const (); #methods_enum_name::MethodsCount as usize] = #vtable_name::new().0;
+        const #const_name: [*const (); #methods_enum_name::VirtMethodsCount as usize] = #vtable_name::new().0;
     }
 }
 
@@ -747,18 +747,18 @@ fn build_call_trait(
     base_types: &[Base],
     vis: &Visibility,
     class_name: &Ident,
-    methods: &[(Ident, TypeBareFn)]
+    virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
     let mut methods_tokens = TokenStream::new();
     for base_type in base_types {
-        for (method_name, method_ty) in &base_type.methods {
+        for (method_name, method_ty) in &base_type.virt_methods {
             let ty = actual_method_ty(method_ty.clone(), class_name);
             let signature = method_signature(&ty, method_name.clone());
             signature.to_tokens(&mut methods_tokens);
             <Token![;]>::default().to_tokens(&mut methods_tokens);
         }
     }
-    for (method_name, method_ty) in methods {
+    for (method_name, method_ty) in virt_methods {
         let ty = actual_method_ty(method_ty.clone(), class_name);
         let signature = method_signature(&ty, method_name.clone());
         signature.to_tokens(&mut methods_tokens);
@@ -775,15 +775,19 @@ fn build_call_trait(
 fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
-    let new_inherited_from = build_inherited_from(&base_types, &class.name, &class.mod_, &class.methods);
+    let new_inherited_from = build_inherited_from(&base_types, &class.name, &class.mod_, &class.virt_methods);
     let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.mod_, &class.fields);
     let trait_ = build_trait(&base_types, &class.vis, &class.name, &class.mod_);
-    let methods_enum = build_methods_enum(&base_types[0].ty, &class.vis, &class.name, &class.mod_, &class.methods);
+    let methods_enum = build_virt_methods_enum(
+        &base_types[0].ty, &class.vis, &class.name, &class.mod_, &class.virt_methods
+    );
     let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
-    let vtable = build_vtable(&base_types, &class.name, &class.mod_, &class.vis, &class.methods, &class.overrides);
+    let vtable = build_vtable(
+        &base_types, &class.name, &class.mod_, &class.vis, &class.virt_methods, &class.overrides
+    );
     let vtable_const = build_vtable_const(&class.name);
-    let call_trait = build_call_trait(&base_types, &class.vis, &class.name, &class.methods);
-    let methods = build_methods(&base_types, &class.name, &class.mod_, &class.methods);
+    let call_trait = build_call_trait(&base_types, &class.vis, &class.name, &class.virt_methods);
+    let methods = build_methods(&base_types, &class.name, &class.mod_, &class.virt_methods);
     Ok(quote! {
         #new_inherited_from
         #struct_

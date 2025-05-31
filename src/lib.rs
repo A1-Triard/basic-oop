@@ -55,11 +55,11 @@ impl TObj for Obj {
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 #[repr(usize)]
-pub enum ObjMethods {
-    MethodsCount = 0usize,
+pub enum ObjVirtMethods {
+    VirtMethodsCount = 0usize,
 }
 
-pub struct ObjVtable(pub [*const (); ObjMethods::MethodsCount as usize]);
+pub struct ObjVtable(pub [*const (); ObjVirtMethods::VirtMethodsCount as usize]);
 
 impl ObjVtable {
     pub const fn new() -> Self {
@@ -67,7 +67,7 @@ impl ObjVtable {
     }
 }
 
-const OBJ_VTABLE: [*const (); ObjMethods::MethodsCount as usize] = ObjVtable::new().0;
+const OBJ_VTABLE: [*const (); ObjVirtMethods::VirtMethodsCount as usize] = ObjVtable::new().0;
 
 #[repr(C)]
 pub struct VtableJoin<const A: usize, const B: usize> {
