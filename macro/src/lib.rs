@@ -577,15 +577,15 @@ pub fn class(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 
 extern crate proc_macro;
 
-use anycase::{to_pascal, to_snake};
+use anycase::{to_pascal, to_snake, to_screaming_snake};
 use iter_identify_first_last::IteratorIdentifyFirstLastExt;
-use itertools::Itertools;
 use macro_magic::import_tokens_attr;
 use proc_macro2::{TokenStream, Span};
 use proc_macro2_diagnostics::{Diagnostic, SpanDiagnosticExt};
 use quote::{quote, TokenStreamExt};
 use syn::{parse_macro_input, parse_quote, ItemStruct, Path, Type, Fields, Meta, Attribute, Visibility, Ident};
-use syn::{Field, FieldMutability, TypePath, Token, PathSegment, PathArguments, LitInt, TypeBareFn};
+use syn::{Field, FieldMutability, TypePath, Token, PathSegment, PathArguments, LitInt, TypeBareFn, Expr};
+use syn::BareFnArg;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 
@@ -647,7 +647,7 @@ fn parse_field_meta(meta: &Meta) -> FieldKind {
             && path.segments[0].arguments.is_none()
         => match path.segments[0].ident.to_string().as_ref() {
             "virt" => FieldKind::Method,
-            "override" => FieldKind::Override,
+            "over" => FieldKind::Override,
             _ => FieldKind::Data,
         },
         _ => FieldKind::Data,
@@ -663,7 +663,7 @@ fn parse_field_attrs(attrs: &[Attribute]) -> Result<FieldKind, Diagnostic> {
                 if kind != FieldKind::Data {
                     return Err(
                          attr.span()
-                        .error("only one of 'virt'/'override' attributes can be specified for a field")
+                        .error("only one of 'virt'/'over' attributes can be specified for a field")
                     );
                 }
                 kind = FieldKind::Method;
@@ -672,7 +672,7 @@ fn parse_field_attrs(attrs: &[Attribute]) -> Result<FieldKind, Diagnostic> {
                 if kind != FieldKind::Data {
                     return Err(
                          attr.span()
-                        .error("only one of 'virt'/'override' attributes can be specified for a field")
+                        .error("only one of 'virt'/'over' attributes can be specified for a field")
                     );
                 }
                 kind = FieldKind::Override;
@@ -967,10 +967,234 @@ fn build_methods_enum(
     }
 }
 
+fn build_consts_for_vtable(class_name: &Ident, class_mod: &Path, base_types: &[Base]) -> TokenStream {
+    let enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let mut tokens = TokenStream::new();
+    for base_type in base_types {
+        let mut base_methods_enum = sanitize_base_type(base_type.ty.clone(), class_mod);
+        patch_path(&mut base_methods_enum, |x| x + "Methods");
+        let base_const_name = Ident::new(
+            &(
+                  class_name.to_string()
+                + &to_screaming_snake(base_type.ty.segments.last().unwrap().ident.to_string())
+                + "_METHODS_COUNT"
+            ),
+            Span::call_site()
+        );
+        let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
+        tokens.extend(quote! {
+            const #base_const_name: usize = #base_methods_enum::MethodsCount as usize;
+            const #complement_const_name: usize = (#enum_name::MethodsCount as usize) - #base_const_name;
+        });
+    }
+    tokens
+}
+
+fn actual_base_method_ty(mut ty: TypeBareFn, base_type: &Path, class_mod: &Path) -> TypeBareFn {
+    let mut base_trait = sanitize_base_type(base_type.clone(), class_mod);
+    patch_path(&mut base_trait, |x| "T".to_string() + &x);
+    let this_arg = BareFnArg {
+        attrs: Vec::new(),
+        name: Some((Ident::new("this", Span::call_site()), <Token![:]>::default())),
+        ty: parse_quote! { &::basic_oop::alloc_sync_Arc<dyn #base_trait> },
+    };
+    ty.inputs.insert(0, this_arg);
+    ty
+}
+
+fn actual_method_ty(mut ty: TypeBareFn, class_name: &Ident) -> TypeBareFn {
+    let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
+    let this_arg = BareFnArg {
+        attrs: Vec::new(),
+        name: Some((Ident::new("this", Span::call_site()), <Token![:]>::default())),
+        ty: parse_quote! { &::basic_oop::alloc_sync_Arc<dyn #trait_name> },
+    };
+    ty.inputs.insert(0, this_arg);
+    ty
+}
+
+fn fn_ty_without_idents(mut ty: TypeBareFn) -> TypeBareFn {
+    for arg in &mut ty.inputs {
+        arg.name = None;
+    }
+    ty
+}
+
 /*
-fn build_vtable() -> TokenStream {
+fn bare_fn_arg_to_fn_arg(a: &BareFnArg) -> Result<FnArg, Diagnostic> {
+    let Some((name, colon_token)) = &a.name else { return Err(a.span().error("argument name required")); }; 
+    Ok(FnArg::Typed(PatType {
+        attrs: a.attrs.clone(),
+        pat: Box::new(Pat::Ident(PatIdent {
+            attrs: Vec::new(),
+            by_ref: None,
+            mutability: None,
+            ident: name.clone(),
+            subpat: None
+        })),
+        colon_token: colon_token.clone(),
+        ty: Box::new(a.ty.clone()),
+    }))
+}
+
+fn fn_signature(ty: &TypeBareFn, name: Ident) -> Result<Signature, Diagnostic> {
+    Ok(Signature {
+        constness: None,
+        asyncness: None,
+        unsafety: None,
+        abi: None,
+        fn_token: ty.fn_token.clone(),
+        ident: name,
+        generics: Generics {
+            lt_token: None,
+            params: Punctuated::new(),
+            gt_token: None,
+            where_clause: None,
+        },
+        paren_token: ty.paren_token.clone(),
+        inputs: ty.inputs.iter().map(bare_fn_arg_to_fn_arg).process_results(|i| i.collect())?,
+        variadic: None,
+        output: ty.output.clone(),
+    })
 }
 */
+
+fn build_vtable(
+    base_types: &[Base],
+    class_name: &Ident,
+    class_mod: &Path,
+    vis: &Visibility,
+    methods: &[(Ident, TypeBareFn)],
+    overrides: &[(Ident, TypeBareFn)],
+) -> TokenStream {
+    let vtable_name = Ident::new(&(class_name.to_string() + "Vtable"), Span::call_site());
+    let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
+    let struct_ = quote! {
+        #vis struct #vtable_name(pub [*const (); #methods_enum_name::MethodsCount as usize]);
+    };
+    let mut methods_impl = TokenStream::new();
+    methods_impl.append_separated(methods.iter().map(|(m, _)| {
+        let impl_name = Ident::new(&(m.to_string() + "_impl"), Span::call_site());
+        quote! { #class_name::#impl_name as *const () }
+    }), <Token![,]>::default());
+    let mut base_vtable = sanitize_base_type(base_types[0].ty.clone(), class_mod);
+    patch_path(&mut base_vtable, |x| x + "Vtable");
+    let base_vtable_new: Expr = parse_quote! { #base_vtable::new() };
+    let mut base_vtable_with_overrides = base_vtable_new;
+    for (override_name, _override_ty) in overrides {
+        let impl_name = Ident::new(&(override_name.to_string() + "_impl"), Span::call_site());
+        base_vtable_with_overrides = parse_quote! {
+            #base_vtable_with_overrides.#override_name(#class_name::#impl_name)
+        };
+    }
+    let base_const_name = Ident::new(
+        &(
+              class_name.to_string()
+            + &to_screaming_snake(base_types[0].ty.segments.last().unwrap().ident.to_string())
+            + "_METHODS_COUNT"
+        ),
+        Span::call_site()
+    );
+    let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
+    let mut base_methods = TokenStream::new();
+    for base_type in base_types {
+        let mut base_vtable = sanitize_base_type(base_type.ty.clone(), class_mod);
+        patch_path(&mut base_vtable, |x| x + "Vtable");
+        let base_const_name = Ident::new(
+            &(
+                  class_name.to_string()
+                + &to_screaming_snake(base_type.ty.segments.last().unwrap().ident.to_string())
+                + "_METHODS_COUNT"),
+            Span::call_site()
+        );
+        let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
+        for (base_method, base_method_ty) in &base_type.methods {
+            let ty = actual_base_method_ty(base_method_ty.clone(), &base_type.ty, class_mod);
+            let ty_without_idents = fn_ty_without_idents(ty);
+            base_methods.extend(quote! {
+                pub const fn #base_method(
+                    self,
+                    f: #ty_without_idents
+                ) -> Self {
+                    let vtable = unsafe { ::basic_oop::core_mem_transmute::<
+                        [*const (); #methods_enum_name::MethodsCount as usize],
+                        ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>
+                    >(self.0) };
+                    let vtable: ::basic_oop::VtableJoin<
+                        #base_const_name,
+                        #complement_const_name
+                    > = ::basic_oop::VtableJoin {
+                        a: #base_vtable(vtable.a).#base_method(f).0,
+                        b: vtable.b
+                    };
+                    #vtable_name(unsafe { ::basic_oop::core_mem_transmute::<
+                        ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>,
+                        [*const (); #methods_enum_name::MethodsCount as usize]
+                    >(vtable) })
+                }
+            });
+        }
+    }
+    let mut methods_tokens = TokenStream::new();
+    for (method_index, (method_name, method_ty)) in methods.iter().enumerate() {
+        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let ty_without_idents = fn_ty_without_idents(ty);
+        let mut list: Punctuated<Expr, Token![,]> = Punctuated::new();
+        for i in 0 .. method_index {
+            let index = LitInt::new(&(i.to_string() + "usize"), Span::call_site());
+            list.push(parse_quote! { vtable.b[#index] });
+        }
+        list.push(parse_quote! { f as *const () });
+        for i in method_index + 1 .. methods.len() {
+            let index = LitInt::new(&(i.to_string() + "usize"), Span::call_site());
+            list.push(parse_quote! { vtable.b[#index] });
+        }
+        methods_tokens.extend(quote! {
+            pub const fn #method_name(
+                self,
+                f: #ty_without_idents
+            ) -> Self {
+                let vtable = unsafe { ::basic_oop::core_mem_transmute::<
+                    [*const (); #methods_enum_name::MethodsCount as usize],
+                    ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>
+                >(self.0) };
+                let vtable: ::basic_oop::VtableJoin<
+                    #base_const_name,
+                    #complement_const_name
+                > = ::basic_oop::VtableJoin {
+                    a: vtable.a,
+                    b: [#list]
+                };
+                #vtable_name(unsafe { ::basic_oop::core_mem_transmute::<
+                    ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>,
+                    [*const (); #methods_enum_name::MethodsCount as usize]
+                >(vtable) })
+            }
+        });
+    }
+    quote! {
+        #struct_
+
+        impl #vtable_name {
+            pub const fn new() -> Self {
+                let vtable: ::basic_oop::VtableJoin<
+                    #base_const_name,
+                    #complement_const_name
+                > = ::basic_oop::VtableJoin {
+                    a: #base_vtable_with_overrides.0,
+                    b: [#methods_impl]
+                };
+                #vtable_name(unsafe { ::basic_oop::core_mem_transmute::<
+                    ::basic_oop::VtableJoin<#base_const_name, #complement_const_name>,
+                    [*const (); #methods_enum_name::MethodsCount as usize]
+                >(vtable) })
+            }
+
+            #base_methods
+            #methods_tokens
+        }
+    }
+}
 
 fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
@@ -979,11 +1203,15 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
     let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.mod_, &class.fields);
     let trait_ = build_trait(&base_types, &class.vis, &class.name, &class.mod_);
     let methods_enum = build_methods_enum(&base_types[0].ty, &class.vis, &class.name, &class.mod_, &class.methods);
+    let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
+    let vtable = build_vtable(&base_types, &class.name, &class.mod_, &class.vis, &class.methods, &class.overrides);
     Ok(quote! {
         #new_inherited_from
         #struct_
         #trait_
         #methods_enum
+        #consts_for_vtable
+        #vtable
     })
 }
 
