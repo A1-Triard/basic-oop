@@ -689,7 +689,7 @@ struct Class {
     mod_: Path,
     fields: Vec<Field>,
     methods: Vec<(Ident, TypeBareFn)>,
-    overrides: Vec<(Ident, TypeBareFn)>,
+    overrides: Vec<Ident>,
 }
 
 impl Class {
@@ -749,13 +749,13 @@ impl Class {
                     },
                     FieldKind::Override => {
                         let name = field.ident.clone().unwrap();
-                        let Type::BareFn(type_fn) = &field.ty else {
+                        let Type::Tuple(type_tuple) = &field.ty else {
                             return Err(field.ty.span().error("invalid override method type"));
                         };
-                        if type_fn.lifetimes.is_some() || type_fn.unsafety.is_some() || type_fn.abi.is_some() {
+                        if !type_tuple.elems.is_empty() {
                             return Err(field.ty.span().error("invalid override method type"));
                         }
-                        overrides.push((name, type_fn.clone()));
+                        overrides.push(name);
                     },
                 }
             }
@@ -1065,7 +1065,7 @@ fn build_vtable(
     class_mod: &Path,
     vis: &Visibility,
     methods: &[(Ident, TypeBareFn)],
-    overrides: &[(Ident, TypeBareFn)],
+    overrides: &[Ident],
 ) -> TokenStream {
     let vtable_name = Ident::new(&(class_name.to_string() + "Vtable"), Span::call_site());
     let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
@@ -1081,7 +1081,7 @@ fn build_vtable(
     patch_path(&mut base_vtable, |x| x + "Vtable");
     let base_vtable_new: Expr = parse_quote! { #base_vtable::new() };
     let mut base_vtable_with_overrides = base_vtable_new;
-    for (override_name, _override_ty) in overrides {
+    for override_name in overrides {
         let impl_name = Ident::new(&(override_name.to_string() + "_impl"), Span::call_site());
         base_vtable_with_overrides = parse_quote! {
             #base_vtable_with_overrides.#override_name(#class_name::#impl_name)
