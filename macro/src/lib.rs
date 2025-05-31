@@ -975,9 +975,9 @@ fn build_consts_for_vtable(class_name: &Ident, class_mod: &Path, base_types: &[B
         patch_path(&mut base_methods_enum, |x| x + "Methods");
         let base_const_name = Ident::new(
             &(
-                  class_name.to_string()
-                + &to_screaming_snake(base_type.ty.segments.last().unwrap().ident.to_string())
-                + "_METHODS_COUNT"
+                to_screaming_snake(
+                    class_name.to_string() + &base_type.ty.segments.last().unwrap().ident.to_string()
+                ) + "_METHODS_COUNT"
             ),
             Span::call_site()
         );
@@ -1089,9 +1089,9 @@ fn build_vtable(
     }
     let base_const_name = Ident::new(
         &(
-              class_name.to_string()
-            + &to_screaming_snake(base_types[0].ty.segments.last().unwrap().ident.to_string())
-            + "_METHODS_COUNT"
+            to_screaming_snake(
+                class_name.to_string() + &base_types[0].ty.segments.last().unwrap().ident.to_string()
+            ) + "_METHODS_COUNT"
         ),
         Span::call_site()
     );
@@ -1102,9 +1102,10 @@ fn build_vtable(
         patch_path(&mut base_vtable, |x| x + "Vtable");
         let base_const_name = Ident::new(
             &(
-                  class_name.to_string()
-                + &to_screaming_snake(base_type.ty.segments.last().unwrap().ident.to_string())
-                + "_METHODS_COUNT"),
+                to_screaming_snake(
+                    class_name.to_string() + &base_type.ty.segments.last().unwrap().ident.to_string()
+                ) + "_METHODS_COUNT"
+            ),
             Span::call_site()
         );
         let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
