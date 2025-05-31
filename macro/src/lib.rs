@@ -634,9 +634,38 @@ fn build_methods(
     class_mod: &Path,
     methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
-    let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
     let methods_enum_name = Ident::new(&(class_name.to_string() + "Methods"), Span::call_site());
     let mut methods_tokens = TokenStream::new();
+    for base_type in base_types {
+        let base_type_ty = sanitize_base_type(base_type.ty.clone(), class_mod);
+        let mut base_trait = base_type_ty.clone();
+        patch_path(&mut base_trait, |x| "T".to_string() + &x);
+        for (method_name, method_ty) in &base_type.methods {
+            let ty = actual_method_ty(method_ty.clone(), class_name);
+            let signature = fn_signature(&ty, method_name.clone());
+            let mut item: ImplItemFn = parse_quote! {
+                #vis #signature {
+                    let this: ::basic_oop::alloc_sync_Arc<dyn #base_trait>
+                        = ::basic_oop::dynamic_cast_dyn_cast_arc(this.clone()).unwrap();
+                    #base_type_ty::#method_name(&this)
+                }
+            };
+            let Stmt::Expr(Expr::Call(call), _) = item.block.stmts.last_mut().unwrap() else { panic!() };
+            for arg in ty.inputs.iter().skip(1) {
+                let mut segments = Punctuated::new();
+                segments.push(PathSegment {
+                    ident: arg.name.clone().unwrap().0,
+                    arguments: PathArguments::None,
+                });
+                call.args.push(Expr::Path(ExprPath {
+                    attrs: Vec::new(),
+                    qself: None,
+                    path: Path { leading_colon: None, segments },
+                }));
+            }
+            item.to_tokens(&mut methods_tokens);
+        }
+    }
     for (method_name, method_ty) in methods {
         let ty = actual_method_ty(method_ty.clone(), class_name);
         let signature = fn_signature(&ty, method_name.clone());

@@ -19,6 +19,8 @@ pub use core::mem::transmute as core_mem_transmute;
 pub use dynamic_cast::SupportsInterfaces as dynamic_cast_SupportsInterfaces;
 #[doc(hidden)]
 pub use dynamic_cast::impl_supports_interfaces as dynamic_cast_impl_supports_interfaces;
+#[doc(hidden)]
+pub use dynamic_cast::dyn_cast_arc as dynamic_cast_dyn_cast_arc;
 
 #[export_tokens_no_emit]
 struct inherited_from_Obj { __class__: ::basic_oop::Obj }
