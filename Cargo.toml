@@ -18,6 +18,6 @@ members = [
 ]
 
 [dependencies]
-basic-oop-macro = { path = "macro", version = "0.1.0" }
+basic-oop-macro = { path = "macro", version = "0.2.0" }
 dynamic-cast = "0.1.5"
 macro_magic = "0.6.0"
