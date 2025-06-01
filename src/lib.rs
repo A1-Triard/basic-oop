@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+use alloc::rc::Rc;
 use alloc::sync::Arc;
 use dynamic_cast::{SupportsInterfaces, impl_supports_interfaces};
 use macro_magic::export_tokens_no_emit;
@@ -11,6 +12,10 @@ pub use macro_magic;
 
 pub use basic_oop_macro::class_unsafe;
 
+pub use basic_oop_macro::class_sync_unsafe;
+
+#[doc(hidden)]
+pub use alloc::rc::Rc as alloc_rc_Rc;
 #[doc(hidden)]
 pub use alloc::sync::Arc as alloc_sync_Arc;
 #[doc(hidden)]
@@ -19,6 +24,8 @@ pub use core::mem::transmute as core_mem_transmute;
 pub use dynamic_cast::SupportsInterfaces as dynamic_cast_SupportsInterfaces;
 #[doc(hidden)]
 pub use dynamic_cast::impl_supports_interfaces as dynamic_cast_impl_supports_interfaces;
+#[doc(hidden)]
+pub use dynamic_cast::dyn_cast_rc as dynamic_cast_dyn_cast_rc;
 #[doc(hidden)]
 pub use dynamic_cast::dyn_cast_arc as dynamic_cast_dyn_cast_arc;
 
@@ -32,7 +39,11 @@ pub struct Obj {
 }
 
 impl Obj {
-    pub fn new() -> Arc<dyn TObj> {
+    pub fn new() -> Rc<dyn TObj> {
+        Rc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
+    }
+
+    pub fn new_sync() -> Arc<dyn TObj> {
         Arc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
     }
 

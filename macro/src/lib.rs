@@ -158,7 +158,6 @@ struct Class {
     vis: Visibility,
     name: Ident,
     mod_: Path,
-    sync: bool,
     fields: Vec<Field>,
     non_virt_methods: Vec<(Ident, TypeBareFn)>,
     virt_methods: Vec<(Ident, TypeBareFn)>,
@@ -170,7 +169,6 @@ impl Class {
         if descr.generics.lt_token.is_some() || descr.generics.where_clause.is_some() {
             return Err(descr.generics.span().error("basic-oop does not support generics"));
         }
-        let mut sync = false;
         let mut mod_ = None;
         let mut fields = Vec::new();
         let mut non_virt_methods = Vec::new();
@@ -207,21 +205,6 @@ impl Class {
                         );
                     }
                     mod_ = Some(type_path.path.clone());
-                },
-                "__sync__" => {
-                    let Type::Tuple(type_tuple) = &field.ty else {
-                        return Err(field.ty.span().error("'__sync__' field type should be empty tuple"));
-                    };
-                    if !type_tuple.elems.is_empty() {
-                        return Err(field.ty.span().error("'__sync__' field type should be empty tuple"));
-                    }
-                    if sync {
-                        return Err(
-                             field.ident.span()
-                            .error("'__sync__' should be specified at most once")
-                        );
-                    }
-                    sync = true;
                 },
                 _ => match parse_field_attrs(&field.attrs)? {
                     FieldKind::Data => fields.push(field.clone()),
@@ -290,7 +273,6 @@ impl Class {
             vis: descr.vis,
             name: descr.ident,
             mod_,
-            sync,
             fields,
             non_virt_methods,
             virt_methods,
@@ -941,7 +923,7 @@ fn build_call_trait(
     }
 }
 
-fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
+fn build(inherited_from: ItemStruct, class: ItemStruct, sync: bool) -> Result<TokenStream, Diagnostic> {
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
     let new_inherited_from = build_inherited_from(
@@ -954,14 +936,14 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
     );
     let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
     let vtable = build_vtable(
-        &base_types, &class.name, &class.mod_, class.sync, &class.vis, &class.virt_methods, &class.overrides
+        &base_types, &class.name, &class.mod_, sync, &class.vis, &class.virt_methods, &class.overrides
     );
     let vtable_const = build_vtable_const(&class.name);
     let call_trait = build_call_trait(
-        &base_types, &class.vis, &class.name, class.sync, &class.non_virt_methods, &class.virt_methods
+        &base_types, &class.vis, &class.name, sync, &class.non_virt_methods, &class.virt_methods
     );
     let methods = build_methods(
-        &base_types, &class.name, &class.mod_, class.sync, &class.non_virt_methods, &class.virt_methods
+        &base_types, &class.name, &class.mod_, sync, &class.non_virt_methods, &class.virt_methods
     );
     Ok(quote! {
         #new_inherited_from
@@ -978,10 +960,21 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
 
 #[import_tokens_attr(::basic_oop::macro_magic)]
 #[proc_macro_attribute]
+pub fn class_sync_unsafe(attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let inherited_from = parse_macro_input!(attr as ItemStruct);
+    let class = parse_macro_input!(input as ItemStruct);
+    match build(inherited_from, class, true) {
+        Ok(tokens) => tokens.into(),
+        Err(diag) => diag.emit_as_expr_tokens().into(),
+    }
+}
+
+#[import_tokens_attr(::basic_oop::macro_magic)]
+#[proc_macro_attribute]
 pub fn class_unsafe(attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let inherited_from = parse_macro_input!(attr as ItemStruct);
     let class = parse_macro_input!(input as ItemStruct);
-    match build(inherited_from, class) {
+    match build(inherited_from, class, false) {
         Ok(tokens) => tokens.into(),
         Err(diag) => diag.emit_as_expr_tokens().into(),
     }
