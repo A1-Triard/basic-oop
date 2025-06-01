@@ -38,6 +38,10 @@ pub struct Obj {
     vtable: Vtable,
 }
 
+unsafe impl Send for Obj { }
+
+unsafe impl Sync for Obj { }
+
 impl Obj {
     pub fn new() -> Rc<dyn TObj> {
         Rc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
