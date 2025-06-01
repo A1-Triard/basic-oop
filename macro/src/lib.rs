@@ -63,7 +63,7 @@ fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic>
             let Type::Path(type_path) = field.ty else {
                 return Err(field.ty.span().error("invalid base class"));
             };
-            if type_path.path.segments.len() < 2 {
+            if type_path.path.segments.len() != 1 {
                 return Err(type_path.span().error("invalid base class"));
             }
             base = Some(Base {
@@ -157,7 +157,6 @@ struct Class {
     attrs: Vec<Attribute>,
     vis: Visibility,
     name: Ident,
-    mod_: Path,
     fields: Vec<Field>,
     non_virt_methods: Vec<(Ident, TypeBareFn)>,
     virt_methods: Vec<(Ident, TypeBareFn)>,
@@ -169,7 +168,6 @@ impl Class {
         if descr.generics.lt_token.is_some() || descr.generics.where_clause.is_some() {
             return Err(descr.generics.span().error("basic-oop does not support generics"));
         }
-        let mut mod_ = None;
         let mut fields = Vec::new();
         let mut non_virt_methods = Vec::new();
         let mut virt_methods = Vec::new();
@@ -178,99 +176,66 @@ impl Class {
             return Err(descr.fields.span().error("class should be described as struct with named fields"));
         };
         for field in descr_fields.named.iter() {
-            match field.ident.as_ref().unwrap().to_string().as_ref() {
-                "__mod__" => {
-                    let Type::Path(type_path) = &field.ty else {
-                        return Err(
-                             field.ty.span()
-                            .error("'__mod__' field value should be full path to class")
-                        );
+            match parse_field_attrs(&field.attrs)? {
+                FieldKind::Data => fields.push(field.clone()),
+                FieldKind::NonVirtMethod => {
+                    let name = field.ident.clone().unwrap();
+                    if name.to_string() == "__class__" {
+                        return Err(name.span().error("this name is reserved"));
+                    }
+                    let Type::BareFn(type_fn) = &field.ty else {
+                        return Err(field.ty.span().error("invalid non-virtual method type"));
                     };
-                    if type_path.qself.is_some() {
-                        return Err(
-                             type_path.span()
-                            .error("'__mod__' field value should be full path to class")
-                        );
+                    if
+                           type_fn.unsafety.is_some()
+                        || type_fn.abi.is_some()
+                        || type_fn.variadic.is_some()
+                        || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
+                    {
+                        return Err(field.ty.span().error("invalid non-virtual method type"));
                     }
-                    if type_path.path.leading_colon.is_none() || type_path.path.segments.is_empty() {
-                        return Err(
-                             type_path.span()
-                            .error("'__mod__' field value should be full path to class starting with leading colon")
-                        );
+                    if let Some(arg) = type_fn.inputs.iter().find(|x| x.name.is_none()) {
+                        return Err(arg.span().error("argument name required"));
                     }
-                    if mod_.is_some() {
-                        return Err(
-                             field.ident.span()
-                            .error("'__mod__' should be specified only once")
-                        );
-                    }
-                    mod_ = Some(type_path.path.clone());
+                    non_virt_methods.push((name, type_fn.clone()));
                 },
-                _ => match parse_field_attrs(&field.attrs)? {
-                    FieldKind::Data => fields.push(field.clone()),
-                    FieldKind::NonVirtMethod => {
-                        let name = field.ident.clone().unwrap();
-                        if name.to_string() == "__class__" {
-                            return Err(name.span().error("this name is reserved"));
-                        }
-                        let Type::BareFn(type_fn) = &field.ty else {
-                            return Err(field.ty.span().error("invalid non-virtual method type"));
-                        };
-                        if
-                               type_fn.unsafety.is_some()
-                            || type_fn.abi.is_some()
-                            || type_fn.variadic.is_some()
-                            || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
-                        {
-                            return Err(field.ty.span().error("invalid non-virtual method type"));
-                        }
-                        if let Some(arg) = type_fn.inputs.iter().find(|x| x.name.is_none()) {
-                            return Err(arg.span().error("argument name required"));
-                        }
-                        non_virt_methods.push((name, type_fn.clone()));
-                    },
-                    FieldKind::VirtMethod => {
-                        let name = field.ident.clone().unwrap();
-                        if name.to_string() == "__class__" {
-                            return Err(name.span().error("this name is reserved"));
-                        }
-                        let Type::BareFn(type_fn) = &field.ty else {
-                            return Err(field.ty.span().error("invalid virtual method type"));
-                        };
-                        if
-                               type_fn.unsafety.is_some()
-                            || type_fn.abi.is_some()
-                            || type_fn.variadic.is_some()
-                            || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
-                        {
-                            return Err(field.ty.span().error("invalid virtual method type"));
-                        }
-                        if let Some(arg) = type_fn.inputs.iter().find(|x| x.name.is_none()) {
-                            return Err(arg.span().error("argument name required"));
-                        }
-                        virt_methods.push((name, type_fn.clone()));
-                    },
-                    FieldKind::Override => {
-                        let name = field.ident.clone().unwrap();
-                        let Type::Tuple(type_tuple) = &field.ty else {
-                            return Err(field.ty.span().error("invalid override method type"));
-                        };
-                        if !type_tuple.elems.is_empty() {
-                            return Err(field.ty.span().error("invalid override method type"));
-                        }
-                        overrides.push(name);
-                    },
-                }
+                FieldKind::VirtMethod => {
+                    let name = field.ident.clone().unwrap();
+                    if name.to_string() == "__class__" {
+                        return Err(name.span().error("this name is reserved"));
+                    }
+                    let Type::BareFn(type_fn) = &field.ty else {
+                        return Err(field.ty.span().error("invalid virtual method type"));
+                    };
+                    if
+                           type_fn.unsafety.is_some()
+                        || type_fn.abi.is_some()
+                        || type_fn.variadic.is_some()
+                        || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
+                    {
+                        return Err(field.ty.span().error("invalid virtual method type"));
+                    }
+                    if let Some(arg) = type_fn.inputs.iter().find(|x| x.name.is_none()) {
+                        return Err(arg.span().error("argument name required"));
+                    }
+                    virt_methods.push((name, type_fn.clone()));
+                },
+                FieldKind::Override => {
+                    let name = field.ident.clone().unwrap();
+                    let Type::Tuple(type_tuple) = &field.ty else {
+                        return Err(field.ty.span().error("invalid override method type"));
+                    };
+                    if !type_tuple.elems.is_empty() {
+                        return Err(field.ty.span().error("invalid override method type"));
+                    }
+                    overrides.push(name);
+                },
             }
         }
-        let Some(mod_) = mod_ else {
-            return Err(descr_fields.span().error("at least '__mod__' field should be specified"));
-        };
         Ok(Class {
             attrs: descr.attrs,
             vis: descr.vis,
             name: descr.ident,
-            mod_,
             fields,
             non_virt_methods,
             virt_methods,
@@ -282,7 +247,6 @@ impl Class {
 fn build_inherited_from(
     base_types: &[Base],
     class_name: &Ident,
-    class_mod: &Path,
     non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> ItemStruct {
@@ -290,7 +254,7 @@ fn build_inherited_from(
     let mut struct_: ItemStruct = parse_quote! {
         #[::basic_oop::macro_magic::export_tokens_no_emit]
         struct #name {
-            __class__: #class_mod::#class_name
+            __class__: #class_name
         }
     };
     let Fields::Named(fields) = &mut struct_.fields else { panic!() };
@@ -370,15 +334,6 @@ fn build_inherited_from(
     struct_
 }
 
-fn sanitize_base_type(mut base_type: Path, mod_: &Path) -> Path {
-    if base_type.segments[0].ident.to_string() == mod_.segments[0].ident.to_string() {
-        // base type in same crate
-        base_type.leading_colon = None;
-        base_type.segments[0].ident = Ident::new("crate", Span::call_site());
-    }
-    base_type
-}
-
 fn patch_path(path: &mut Path, f: impl FnOnce(String) -> String) {
     let ident = f(path.segments.last().unwrap().ident.to_string());
     path.segments.last_mut().unwrap().ident = Ident::new(&ident, Span::call_site());
@@ -395,10 +350,9 @@ fn build_struct(
     attrs: &[Attribute],
     vis: &Visibility,
     name: &Ident,
-    mod_: &Path,
     fields: &[Field]
 ) -> ItemStruct {
-    let base_type = sanitize_base_type(base_types[0].ty.clone(), mod_);
+    let base_type = base_types[0].ty.clone();
     let base_field = Ident::new(&to_snake(base_type.segments.last().unwrap().ident.to_string()), Span::call_site());
     let attrs = build_attrs(attrs);
     let mut struct_: ItemStruct = parse_quote! {
@@ -414,13 +368,13 @@ fn build_struct(
     struct_
 }
 
-fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, mod_: &Path) -> TokenStream {
-    let base_type = sanitize_base_type(base_types[0].ty.clone(), mod_);
+fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident) -> TokenStream {
+    let base_type = base_types[0].ty.clone();
     let base_field = Ident::new(
         &to_snake(base_type.segments.last().unwrap().ident.to_string()),
         Span::call_site()
     );
-    let mut base_trait = sanitize_base_type(base_types[0].ty.clone(), mod_);
+    let mut base_trait = base_types[0].ty.clone();
     patch_path(&mut base_trait, |x| "T".to_string() + &x);
     let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
     let method_name = Ident::new(&to_snake(class_name.to_string()), Span::call_site());
@@ -442,7 +396,7 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, mod_: 
             &to_snake(base_base_type.ty.segments.last().unwrap().ident.to_string()),
             Span::call_site()
         );
-        let mut base_base_trait = sanitize_base_type(base_base_type.ty.clone(), mod_);
+        let mut base_base_trait = base_base_type.ty.clone();
         patch_path(&mut base_base_trait, |x| "T".to_string() + &x);
         let base_base_type_ty = &base_base_type.ty;
         trait_.extend(quote! {
@@ -464,7 +418,7 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, mod_: 
     });
     traits_list.push(trait_path);
     for base_type in base_types {
-        let mut base_trait = sanitize_base_type(base_type.ty.clone(), mod_);
+        let mut base_trait = base_type.ty.clone();
         patch_path(&mut base_trait, |x| "T".to_string() + &x);
         traits_list.push(base_trait);
     }
@@ -478,10 +432,9 @@ fn build_virt_methods_enum(
     base_type: &Path,
     vis: &Visibility,
     class_name: &Ident,
-    mod_: &Path,
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
-    let mut base_methods_enum = sanitize_base_type(base_type.clone(), mod_);
+    let mut base_methods_enum = base_type.clone();
     patch_path(&mut base_methods_enum, |x| x + "VirtMethods");
     let methods_enum = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut values = TokenStream::new();
@@ -506,11 +459,11 @@ fn build_virt_methods_enum(
     }
 }
 
-fn build_consts_for_vtable(class_name: &Ident, class_mod: &Path, base_types: &[Base]) -> TokenStream {
+fn build_consts_for_vtable(class_name: &Ident, base_types: &[Base]) -> TokenStream {
     let enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut tokens = TokenStream::new();
     for base_type in base_types {
-        let mut base_methods_enum = sanitize_base_type(base_type.ty.clone(), class_mod);
+        let mut base_methods_enum = base_type.ty.clone();
         patch_path(&mut base_methods_enum, |x| x + "VirtMethods");
         let base_const_name = Ident::new(
             &(
@@ -529,13 +482,13 @@ fn build_consts_for_vtable(class_name: &Ident, class_mod: &Path, base_types: &[B
     tokens
 }
 
-fn actual_base_method_ty(mut ty: TypeBareFn, base_type: &Path, class_mod: &Path, sync: bool) -> TypeBareFn {
+fn actual_base_method_ty(mut ty: TypeBareFn, base_type: &Path, sync: bool) -> TypeBareFn {
     let rc = if sync {
         quote! { ::basic_oop::alloc_sync_Arc }
     } else {
         quote! { ::basic_oop::alloc_rc_Rc }
     };
-    let mut base_trait = sanitize_base_type(base_type.clone(), class_mod);
+    let mut base_trait = base_type.clone();
     patch_path(&mut base_trait, |x| "T".to_string() + &x);
     let this_arg = BareFnArg {
         attrs: Vec::new(),
@@ -647,7 +600,6 @@ fn method_signature(ty: &TypeBareFn, name: Ident) -> Signature {
 fn build_vtable(
     base_types: &[Base],
     class_name: &Ident,
-    class_mod: &Path,
     sync: bool,
     vis: &Visibility,
     virt_methods: &[(Ident, TypeBareFn)],
@@ -663,7 +615,7 @@ fn build_vtable(
         let impl_name = Ident::new(&(m.to_string() + "_impl"), Span::call_site());
         quote! { #class_name::#impl_name as *const () }
     }), <Token![,]>::default());
-    let mut base_vtable = sanitize_base_type(base_types[0].ty.clone(), class_mod);
+    let mut base_vtable = base_types[0].ty.clone();
     patch_path(&mut base_vtable, |x| x + "Vtable");
     let base_vtable_new: Expr = parse_quote! { #base_vtable::new() };
     let mut base_vtable_with_overrides = base_vtable_new;
@@ -684,7 +636,7 @@ fn build_vtable(
     let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
     let mut base_methods = TokenStream::new();
     for base_type in base_types {
-        let mut base_vtable = sanitize_base_type(base_type.ty.clone(), class_mod);
+        let mut base_vtable = base_type.ty.clone();
         patch_path(&mut base_vtable, |x| x + "Vtable");
         let base_const_name = Ident::new(
             &(
@@ -696,7 +648,7 @@ fn build_vtable(
         );
         let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
         for (base_method, base_method_ty) in &base_type.virt_methods {
-            let ty = actual_base_method_ty(base_method_ty.clone(), &base_type.ty, class_mod, sync);
+            let ty = actual_base_method_ty(base_method_ty.clone(), &base_type.ty, sync);
             let ty_without_idents = fn_ty_without_idents(ty);
             base_methods.extend(quote! {
                 pub const fn #base_method(
@@ -786,7 +738,6 @@ fn build_vtable(
 fn build_methods(
     base_types: &[Base],
     class_name: &Ident,
-    class_mod: &Path,
     sync: bool,
     non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
@@ -799,7 +750,7 @@ fn build_methods(
     let methods_enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut methods_tokens = TokenStream::new();
     for base_type in base_types {
-        let base_type_ty = sanitize_base_type(base_type.ty.clone(), class_mod);
+        let base_type_ty = base_type.ty.clone();
         let mut base_trait = base_type_ty.clone();
         patch_path(&mut base_trait, |x| "T".to_string() + &x);
         let mut base_trait_ext = base_type_ty.clone();
@@ -935,23 +886,23 @@ fn build(inherited_from: ItemStruct, class: ItemStruct, sync: bool) -> Result<To
     let base_types = parse_base_types(inherited_from)?;
     let class = Class::parse(class)?;
     let new_inherited_from = build_inherited_from(
-        &base_types, &class.name, &class.mod_, &class.non_virt_methods, &class.virt_methods
+        &base_types, &class.name, &class.non_virt_methods, &class.virt_methods
     );
-    let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.mod_, &class.fields);
-    let trait_ = build_trait(&base_types, &class.vis, &class.name, &class.mod_);
+    let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.fields);
+    let trait_ = build_trait(&base_types, &class.vis, &class.name);
     let methods_enum = build_virt_methods_enum(
-        &base_types[0].ty, &class.vis, &class.name, &class.mod_, &class.virt_methods
+        &base_types[0].ty, &class.vis, &class.name, &class.virt_methods
     );
-    let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
+    let consts_for_vtable = build_consts_for_vtable(&class.name, &base_types);
     let vtable = build_vtable(
-        &base_types, &class.name, &class.mod_, sync, &class.vis, &class.virt_methods, &class.overrides
+        &base_types, &class.name, sync, &class.vis, &class.virt_methods, &class.overrides
     );
     let vtable_const = build_vtable_const(&class.name);
     let call_trait = build_call_trait(
         &base_types, &class.vis, &class.name, sync, &class.non_virt_methods, &class.virt_methods
     );
     let methods = build_methods(
-        &base_types, &class.name, &class.mod_, sync, &class.non_virt_methods, &class.virt_methods
+        &base_types, &class.name, sync, &class.non_virt_methods, &class.virt_methods
     );
     Ok(quote! {
         #new_inherited_from

@@ -30,7 +30,7 @@ pub use dynamic_cast::dyn_cast_rc as dynamic_cast_dyn_cast_rc;
 pub use dynamic_cast::dyn_cast_arc as dynamic_cast_dyn_cast_arc;
 
 #[export_tokens_no_emit]
-struct inherited_from_Obj { __class__: ::basic_oop::Obj }
+struct inherited_from_Obj { __class__: Obj }
 
 pub type Vtable = *const *const ();
 
