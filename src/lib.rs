@@ -60,7 +60,7 @@ pub mod obj {
     pub mod obj_types { }
 
     #[export_tokens_no_emit]
-    struct inherited_from_Obj { __class__: Obj }
+    struct inherits_Obj { __class__: Obj }
 
     #[derive(Debug, Clone)]
     pub struct Obj {

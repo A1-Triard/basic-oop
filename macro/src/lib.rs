@@ -49,9 +49,9 @@ struct Base {
     virt_methods: Vec<(Ident, TypeBareFn)>,
 }
 
-fn parse_base_types(inherited_from: ItemStruct) -> Result<Vec<Base>, Diagnostic> {
-    let Fields::Named(fields) = inherited_from.fields else {
-        return Err(inherited_from.fields.span().error("invalid base class"));
+fn parse_base_types(inherits: ItemStruct) -> Result<Vec<Base>, Diagnostic> {
+    let Fields::Named(fields) = inherits.fields else {
+        return Err(inherits.fields.span().error("invalid base class"));
     };
     let mut res = Vec::new();
     let mut base = None;
@@ -244,13 +244,13 @@ impl Class {
     }
 }
 
-fn build_inherited_from(
+fn build_inherits(
     base_types: &[Base],
     class_name: &Ident,
     non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> ItemStruct {
-    let name = Ident::new(&("inherited_from_".to_string() + &class_name.to_string()), Span::call_site());
+    let name = Ident::new(&("inherits_".to_string() + &class_name.to_string()), Span::call_site());
     let mut struct_: ItemStruct = parse_quote! {
         #[::basic_oop::macro_magic::export_tokens_no_emit]
         struct #name {
@@ -882,10 +882,10 @@ fn build_call_trait(
     }
 }
 
-fn build(inherited_from: ItemStruct, class: ItemStruct, sync: bool) -> Result<TokenStream, Diagnostic> {
-    let base_types = parse_base_types(inherited_from)?;
+fn build(inherits: ItemStruct, class: ItemStruct, sync: bool) -> Result<TokenStream, Diagnostic> {
+    let base_types = parse_base_types(inherits)?;
     let class = Class::parse(class)?;
-    let new_inherited_from = build_inherited_from(
+    let new_inherits = build_inherits(
         &base_types, &class.name, &class.non_virt_methods, &class.virt_methods
     );
     let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.fields);
@@ -905,7 +905,7 @@ fn build(inherited_from: ItemStruct, class: ItemStruct, sync: bool) -> Result<To
         &base_types, &class.name, sync, &class.non_virt_methods, &class.virt_methods
     );
     Ok(quote! {
-        #new_inherited_from
+        #new_inherits
         #struct_
         #trait_
         #methods_enum
@@ -920,9 +920,9 @@ fn build(inherited_from: ItemStruct, class: ItemStruct, sync: bool) -> Result<To
 #[import_tokens_attr(::basic_oop::macro_magic)]
 #[proc_macro_attribute]
 pub fn class_sync_unsafe(attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let inherited_from = parse_macro_input!(attr as ItemStruct);
+    let inherits = parse_macro_input!(attr as ItemStruct);
     let class = parse_macro_input!(input as ItemStruct);
-    match build(inherited_from, class, true) {
+    match build(inherits, class, true) {
         Ok(tokens) => tokens.into(),
         Err(diag) => diag.emit_as_expr_tokens().into(),
     }
@@ -931,9 +931,9 @@ pub fn class_sync_unsafe(attr: proc_macro::TokenStream, input: proc_macro::Token
 #[import_tokens_attr(::basic_oop::macro_magic)]
 #[proc_macro_attribute]
 pub fn class_unsafe(attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let inherited_from = parse_macro_input!(attr as ItemStruct);
+    let inherits = parse_macro_input!(attr as ItemStruct);
     let class = parse_macro_input!(input as ItemStruct);
-    match build(inherited_from, class, false) {
+    match build(inherits, class, false) {
         Ok(tokens) => tokens.into(),
         Err(diag) => diag.emit_as_expr_tokens().into(),
     }
