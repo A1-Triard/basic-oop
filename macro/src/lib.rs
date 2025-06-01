@@ -1,7 +1,6 @@
 extern crate proc_macro;
 
 use anycase::{to_pascal, to_snake, to_screaming_snake};
-use iter_identify_first_last::IteratorIdentifyFirstLastExt;
 use macro_magic::import_tokens_attr;
 use proc_macro2::{TokenStream, Span};
 use proc_macro2_diagnostics::{Diagnostic, SpanDiagnosticExt};
@@ -159,6 +158,7 @@ struct Class {
     vis: Visibility,
     name: Ident,
     mod_: Path,
+    sync: bool,
     fields: Vec<Field>,
     non_virt_methods: Vec<(Ident, TypeBareFn)>,
     virt_methods: Vec<(Ident, TypeBareFn)>,
@@ -170,6 +170,7 @@ impl Class {
         if descr.generics.lt_token.is_some() || descr.generics.where_clause.is_some() {
             return Err(descr.generics.span().error("basic-oop does not support generics"));
         }
+        let mut sync = false;
         let mut mod_ = None;
         let mut fields = Vec::new();
         let mut non_virt_methods = Vec::new();
@@ -178,35 +179,51 @@ impl Class {
         let Fields::Named(descr_fields) = descr.fields else {
             return Err(descr.fields.span().error("class should be described as struct with named fields"));
         };
-        for (is_first, field) in descr_fields.named.iter().identify_first() {
-            if is_first {
-                if field.ident.as_ref().unwrap().to_string() != "__mod__" {
-                    return Err(
-                         field.ident.as_ref().unwrap().span()
-                        .error("first field should be '__mod__' with full path to class")
-                    );
-                }
-                let Type::Path(type_path) = &field.ty else {
-                    return Err(
-                         field.ty.span()
-                        .error("first field should be '__mod__' with full path to class")
-                    );
-                };
-                if type_path.qself.is_some() {
-                    return Err(
-                         type_path.span()
-                        .error("first field should be '__mod__' with full path to class")
-                    );
-                }
-                if type_path.path.leading_colon.is_none() || type_path.path.segments.is_empty() {
-                    return Err(
-                         type_path.span()
-                        .error("first field should be '__mod__' with full path to class starting with leading colon")
-                    );
-                }
-                mod_ = Some(type_path.path.clone());
-            } else {
-                match parse_field_attrs(&field.attrs)? {
+        for field in descr_fields.named.iter() {
+            match field.ident.as_ref().unwrap().to_string().as_ref() {
+                "__mod__" => {
+                    let Type::Path(type_path) = &field.ty else {
+                        return Err(
+                             field.ty.span()
+                            .error("'__mod__' field value should be full path to class")
+                        );
+                    };
+                    if type_path.qself.is_some() {
+                        return Err(
+                             type_path.span()
+                            .error("'__mod__' field value should be full path to class")
+                        );
+                    }
+                    if type_path.path.leading_colon.is_none() || type_path.path.segments.is_empty() {
+                        return Err(
+                             type_path.span()
+                            .error("'__mod__' field value should be full path to class starting with leading colon")
+                        );
+                    }
+                    if mod_.is_some() {
+                        return Err(
+                             field.ident.span()
+                            .error("'__mod__' should be specified only once")
+                        );
+                    }
+                    mod_ = Some(type_path.path.clone());
+                },
+                "__sync__" => {
+                    let Type::Tuple(type_tuple) = &field.ty else {
+                        return Err(field.ty.span().error("'__sync__' field type should be empty tuple"));
+                    };
+                    if !type_tuple.elems.is_empty() {
+                        return Err(field.ty.span().error("'__sync__' field type should be empty tuple"));
+                    }
+                    if sync {
+                        return Err(
+                             field.ident.span()
+                            .error("'__sync__' should be specified at most once")
+                        );
+                    }
+                    sync = true;
+                },
+                _ => match parse_field_attrs(&field.attrs)? {
                     FieldKind::Data => fields.push(field.clone()),
                     FieldKind::NonVirtMethod => {
                         let name = field.ident.clone().unwrap();
@@ -268,17 +285,12 @@ impl Class {
         let Some(mod_) = mod_ else {
             return Err(descr_fields.span().error("at least '__mod__' field should be specified"));
         };
-        if mod_.leading_colon.is_none() {
-            return Err(
-                 mod_.span()
-                .error("first field should be '__mod__' with full path to class starting with leading colon")
-            );
-        }
         Ok(Class {
             attrs: descr.attrs,
             vis: descr.vis,
             name: descr.ident,
             mod_,
+            sync,
             fields,
             non_virt_methods,
             virt_methods,
@@ -537,24 +549,34 @@ fn build_consts_for_vtable(class_name: &Ident, class_mod: &Path, base_types: &[B
     tokens
 }
 
-fn actual_base_method_ty(mut ty: TypeBareFn, base_type: &Path, class_mod: &Path) -> TypeBareFn {
+fn actual_base_method_ty(mut ty: TypeBareFn, base_type: &Path, class_mod: &Path, sync: bool) -> TypeBareFn {
+    let rc = if sync {
+        quote! { ::basic_oop::alloc_sync_Arc }
+    } else {
+        quote! { ::basic_oop::alloc_rc_Rc }
+    };
     let mut base_trait = sanitize_base_type(base_type.clone(), class_mod);
     patch_path(&mut base_trait, |x| "T".to_string() + &x);
     let this_arg = BareFnArg {
         attrs: Vec::new(),
         name: Some((Ident::new("this", Span::call_site()), <Token![:]>::default())),
-        ty: parse_quote! { &::basic_oop::alloc_sync_Arc<dyn #base_trait> },
+        ty: parse_quote! { &#rc<dyn #base_trait> },
     };
     ty.inputs.insert(0, this_arg);
     ty
 }
 
-fn actual_method_ty(mut ty: TypeBareFn, class_name: &Ident) -> TypeBareFn {
+fn actual_method_ty(mut ty: TypeBareFn, class_name: &Ident, sync: bool) -> TypeBareFn {
+    let rc = if sync {
+        quote! { ::basic_oop::alloc_sync_Arc }
+    } else {
+        quote! { ::basic_oop::alloc_rc_Rc }
+    };
     let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
     let this_arg = BareFnArg {
         attrs: Vec::new(),
         name: Some((Ident::new("this", Span::call_site()), <Token![:]>::default())),
-        ty: parse_quote! { &::basic_oop::alloc_sync_Arc<dyn #trait_name> },
+        ty: parse_quote! { &#rc<dyn #trait_name> },
     };
     ty.inputs.insert(0, this_arg);
     ty
@@ -636,6 +658,7 @@ fn build_vtable(
     base_types: &[Base],
     class_name: &Ident,
     class_mod: &Path,
+    sync: bool,
     vis: &Visibility,
     virt_methods: &[(Ident, TypeBareFn)],
     overrides: &[Ident],
@@ -683,7 +706,7 @@ fn build_vtable(
         );
         let complement_const_name = Ident::new(&(base_const_name.to_string() + "_COMPL"), Span::call_site());
         for (base_method, base_method_ty) in &base_type.virt_methods {
-            let ty = actual_base_method_ty(base_method_ty.clone(), &base_type.ty, class_mod);
+            let ty = actual_base_method_ty(base_method_ty.clone(), &base_type.ty, class_mod, sync);
             let ty_without_idents = fn_ty_without_idents(ty);
             base_methods.extend(quote! {
                 pub const fn #base_method(
@@ -711,7 +734,7 @@ fn build_vtable(
     }
     let mut methods_tokens = TokenStream::new();
     for (method_index, (method_name, method_ty)) in virt_methods.iter().enumerate() {
-        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let ty = actual_method_ty(method_ty.clone(), class_name, sync);
         let ty_without_idents = fn_ty_without_idents(ty);
         let mut list: Punctuated<Expr, Token![,]> = Punctuated::new();
         for i in 0 .. method_index {
@@ -774,9 +797,15 @@ fn build_methods(
     base_types: &[Base],
     class_name: &Ident,
     class_mod: &Path,
+    sync: bool,
     non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
+    let (rc, cast) = if sync {
+        (quote! { ::basic_oop::alloc_sync_Arc }, quote! { ::basic_oop::dynamic_cast_dyn_cast_arc })
+    } else {
+        (quote! { ::basic_oop::alloc_rc_Rc }, quote! { ::basic_oop::dynamic_cast_dyn_cast_rc })
+    };
     let methods_enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut methods_tokens = TokenStream::new();
     for base_type in base_types {
@@ -786,12 +815,11 @@ fn build_methods(
         let mut base_trait_ext = base_type_ty.clone();
         patch_path(&mut base_trait_ext, |x| x + "Ext");
         for (method_name, method_ty) in base_type.non_virt_methods.iter().chain(base_type.virt_methods.iter()) {
-            let ty = actual_method_ty(method_ty.clone(), class_name);
+            let ty = actual_method_ty(method_ty.clone(), class_name, sync);
             let signature = method_signature(&ty, method_name.clone());
             let mut item: ImplItemFn = parse_quote! {
                 #signature {
-                    let this: ::basic_oop::alloc_sync_Arc<dyn #base_trait>
-                        = ::basic_oop::dynamic_cast_dyn_cast_arc(self.clone()).unwrap();
+                    let this: #rc<dyn #base_trait> = #cast(self.clone()).unwrap();
                     #base_trait_ext::#method_name(&this)
                 }
             };
@@ -812,7 +840,7 @@ fn build_methods(
         }
     }
     for (method_name, method_ty) in non_virt_methods {
-        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let ty = actual_method_ty(method_ty.clone(), class_name, sync);
         let signature = method_signature(&ty, method_name.clone());
         let name = Ident::new(&(method_name.to_string() + "_impl"), Span::call_site());
         let mut item: ImplItemFn = parse_quote! {
@@ -836,7 +864,7 @@ fn build_methods(
         item.to_tokens(&mut methods_tokens);
     }
     for (method_name, method_ty) in virt_methods {
-        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let ty = actual_method_ty(method_ty.clone(), class_name, sync);
         let signature = method_signature(&ty, method_name.clone());
         let ty_without_idents = fn_ty_without_idents(ty.clone());
         let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
@@ -867,7 +895,7 @@ fn build_methods(
     let trait_name = Ident::new(&(class_name.to_string() + "Ext"), Span::call_site());
     let t = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
     quote! {
-        impl #trait_name for ::basic_oop::alloc_sync_Arc<dyn #t> {
+        impl #trait_name for #rc<dyn #t> {
             #methods_tokens
         }
     }
@@ -886,20 +914,21 @@ fn build_call_trait(
     base_types: &[Base],
     vis: &Visibility,
     class_name: &Ident,
+    sync: bool,
     non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> TokenStream {
     let mut methods_tokens = TokenStream::new();
     for base_type in base_types {
         for (method_name, method_ty) in base_type.non_virt_methods.iter().chain(base_type.virt_methods.iter()) {
-            let ty = actual_method_ty(method_ty.clone(), class_name);
+            let ty = actual_method_ty(method_ty.clone(), class_name, sync);
             let signature = method_signature(&ty, method_name.clone());
             signature.to_tokens(&mut methods_tokens);
             <Token![;]>::default().to_tokens(&mut methods_tokens);
         }
     }
     for (method_name, method_ty) in non_virt_methods.iter().chain(virt_methods.iter()) {
-        let ty = actual_method_ty(method_ty.clone(), class_name);
+        let ty = actual_method_ty(method_ty.clone(), class_name, sync);
         let signature = method_signature(&ty, method_name.clone());
         signature.to_tokens(&mut methods_tokens);
         <Token![;]>::default().to_tokens(&mut methods_tokens);
@@ -925,14 +954,14 @@ fn build(inherited_from: ItemStruct, class: ItemStruct) -> Result<TokenStream, D
     );
     let consts_for_vtable = build_consts_for_vtable(&class.name, &class.mod_, &base_types);
     let vtable = build_vtable(
-        &base_types, &class.name, &class.mod_, &class.vis, &class.virt_methods, &class.overrides
+        &base_types, &class.name, &class.mod_, class.sync, &class.vis, &class.virt_methods, &class.overrides
     );
     let vtable_const = build_vtable_const(&class.name);
     let call_trait = build_call_trait(
-        &base_types, &class.vis, &class.name, &class.non_virt_methods, &class.virt_methods
+        &base_types, &class.vis, &class.name, class.sync, &class.non_virt_methods, &class.virt_methods
     );
     let methods = build_methods(
-        &base_types, &class.name, &class.mod_, &class.non_virt_methods, &class.virt_methods
+        &base_types, &class.name, &class.mod_, class.sync, &class.non_virt_methods, &class.virt_methods
     );
     Ok(quote! {
         #new_inherited_from
