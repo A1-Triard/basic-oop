@@ -811,7 +811,7 @@ fn build_methods(
         let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
         let mut item: ImplItemFn = parse_quote! {
             #signature {
-                let vtable = ::basic_oop::TObj::obj(self.as_ref()).vtable();
+                let vtable = ::basic_oop::obj::TObj::obj(self.as_ref()).vtable();
                 let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
                     *vtable.add(#methods_enum_name::#name as usize)
                 ) };
