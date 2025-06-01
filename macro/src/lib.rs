@@ -217,8 +217,7 @@ impl Class {
                             return Err(field.ty.span().error("invalid non-virtual method type"));
                         };
                         if
-                               type_fn.lifetimes.is_some()
-                            || type_fn.unsafety.is_some()
+                               type_fn.unsafety.is_some()
                             || type_fn.abi.is_some()
                             || type_fn.variadic.is_some()
                             || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
@@ -239,8 +238,7 @@ impl Class {
                             return Err(field.ty.span().error("invalid virtual method type"));
                         };
                         if
-                               type_fn.lifetimes.is_some()
-                            || type_fn.unsafety.is_some()
+                               type_fn.unsafety.is_some()
                             || type_fn.abi.is_some()
                             || type_fn.variadic.is_some()
                             || type_fn.inputs.iter().any(|x| !x.attrs.is_empty())
@@ -588,6 +586,21 @@ fn bare_fn_arg_to_fn_arg(a: &BareFnArg) -> FnArg {
 }
 
 fn method_signature(ty: &TypeBareFn, name: Ident) -> Signature {
+    let generics = if let Some(lifetimes) = &ty.lifetimes {
+        Generics {
+            lt_token: Some(lifetimes.lt_token),
+            params: lifetimes.lifetimes.clone(),
+            gt_token: Some(lifetimes.gt_token),
+            where_clause: None,
+        }
+    } else {
+        Generics {
+            lt_token: None,
+            params: Punctuated::new(),
+            gt_token: None,
+            where_clause: None,
+        }
+    };
     let mut s = Signature {
         constness: None,
         asyncness: None,
@@ -595,12 +608,7 @@ fn method_signature(ty: &TypeBareFn, name: Ident) -> Signature {
         abi: None,
         fn_token: ty.fn_token.clone(),
         ident: name,
-        generics: Generics {
-            lt_token: None,
-            params: Punctuated::new(),
-            gt_token: None,
-            where_clause: None,
-        },
+        generics,
         paren_token: ty.paren_token.clone(),
         inputs: Punctuated::new(),
         variadic: None,
