@@ -34,6 +34,7 @@ struct inherited_from_Obj { __class__: ::basic_oop::Obj }
 
 pub type Vtable = *const *const ();
 
+#[derive(Debug, Clone)]
 pub struct Obj {
     vtable: Vtable,
 }
