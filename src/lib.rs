@@ -36,7 +36,11 @@ pub struct VtableJoin<const A: usize, const B: usize> {
 
 #[macro_export]
 macro_rules! import {
-    ($vis:vis $class:ident : use $([$base:ident $($path:tt)*])+ ; $($custom_uses:tt)*) => {
+    (
+        $vis:vis $class:ident :
+        use $([$base:ident $($path:tt)*])+ ;
+        $($custom_use:tt)*
+    ) => {
         $vis mod ${concat($class, _types)} {
             $(
                 #[allow(unused_imports)]
@@ -44,9 +48,39 @@ macro_rules! import {
                 #[allow(unused_imports)]
                 pub use $($path)*:: ${concat($base, _types)} ::*;
             )+
-            $($custom_uses)*
+            $crate::import_impl! { @split [] [$($custom_use)*] }
         }
         use ${concat($class, _types)} ::*;
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! import_impl {
+    (
+        @split [$($t:tt)*] [ ; $($custom_use:tt)*]
+    ) => {
+        $crate::import_impl! { @use [$($t)* ; ] }
+        $crate::import_impl! { @split [] [$($custom_use)*] }
+    };
+    (
+        @split [$($t:tt)*] [$x:tt $($custom_use:tt)*]
+    ) => {
+        $crate::import_impl! { @split [$($t)* $x] [$($custom_use)*] }
+    };
+    (
+        @split [] []
+    ) => {
+    };
+    (
+        @split [$($t:tt)+] []
+    ) => {
+        $crate::import_impl! { @use [$($t)+] }
+    };
+    (
+        @use [use $($list:tt)*]
+    ) => {
+        pub use $($list)*
     };
 }
 
