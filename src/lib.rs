@@ -1,5 +1,124 @@
 #![feature(macro_metavar_expr_concat)]
 
+#![deny(warnings)]
+#![doc(test(attr(deny(warnings))))]
+#![doc(test(attr(allow(dead_code))))]
+#![doc(test(attr(allow(unused_variables))))]
+
+//! The crate provides basic tools for writing object-oriented code in Rust.
+//! Very basic: no multiply inheritance, no interfaces
+//! (but this can be added in future in a limited form), no incapsulation.
+//! All classes in hierarchy should have distinct names even if they are located in different modules.
+//!
+//! # How to define a class
+//!
+//! First you need to _import_ the parent class. All classes should be derived from some parent
+//! class. The only class not having any parent is `Obj` defined in `basic_oop::obj` module. It contains
+//! no fields or methods. Lets import it:
+//!
+//! ```
+//! import! { pub test_class:
+//!     use [obj basic_oop::obj];
+//! }
+//! ```
+//!
+//! Here `test_class` correspond to our new class name.
+//! (Although it is possible to use different names in the import section and in the class definition,
+//! doing so is not recommended to avoid confusion among users of the class.)
+//!
+//! The pub keyword means that our class will be public. In case of a private class, it should be omitted.
+//!
+//! All types that we plan to use in the method signatures of our class
+//! should also be imported as unique names. For example:
+//!
+//! ```
+//! import! { pub test_class:
+//!     use [obj basic_oop::obj];
+//!     use std::rc::Rc;
+//!     use std::rc::Weak as rc_Weak;
+//! }
+//! ```
+//! 
+//! Now we can start to define our class using [`class_unsafe`] or [`class_sync_unsafe`] macro.
+//!
+//! Classes defined with the [`class_unsafe`] macro are intended for use with the [`Rc`](alloc::rc::Rc)
+//! smart pointer, while classes defined with [`class_sync_unsafe`] are intended for
+//! [`Arc`](alloc::sync::Arc). It is forbidden to inherit `Rc`-based class from `Arc`-based and
+//! overwise. The [`Obj`](obj::Obj) class is the only class indifferent to the type of smart
+//! pointer, and any class can inherits it.
+//!
+//! Suppose we don't need reference counter atomicity, and choose `class_unsafe`. Then our class
+//! definition will be the next:
+//!
+//! ```
+//! #[class_unsafe(inherits_Obj)]
+//! pub struct TestClass { }
+//! ```
+//!
+//! Each class should have two constructors: one for creating this particular class
+//! and one for calling it from the constructor of the inheritor:
+//!
+//! ```
+//! impl TestClass {
+//!     pub fn new() -> Rc<dyn TTestClass> {
+//!         Rc::new(unsafe { Self::new_raw(TEST_CLASS_VTABLE.as_ptr()) })
+//!     }
+//!
+//!     pub unsafe fn new_raw(vtable: Vtable) -> Self {
+//!         TestClass { obj: unsafe { Obj::new_raw(vtable) } }
+//!     }
+//! }
+//! ```
+//!
+//! # Fields
+//!
+//! To add a field to class, we just write it in ordinar way:
+//!
+//! ```
+//! #[class_unsafe(inherits_Obj)]
+//! pub struct TestClass {
+//!     field: Rc<String>,
+//! }
+//!
+//! impl TestClass {
+//!     pub fn new(field: Rc<String>) -> Rc<dyn TTestClass> {
+//!         Rc::new(unsafe { Self::new_raw(field, TEST_CLASS_VTABLE.as_ptr()) })
+//!     }
+//!
+//!     pub unsafe fn new_raw(field: Rc<String>, vtable: Vtable) -> Self {
+//!         TestClass {
+//!             obj: unsafe { Obj::new_raw(vtable) },
+//!             field,
+//!         }
+//!     }
+//! }
+//! ```
+//!
+//! # Non-virtual methods
+//!
+//! To add a method, it is needed to specify a fictive field with `#[non_virt]` attribute and
+//! function type:
+//!
+//! ```
+//! #[class_unsafe(inherits_Obj)]
+//! pub struct TestClass {
+//!     ...
+//!     #[non_virt]
+//!     get_field: fn() -> Rc<String>,
+//! }
+//! ```
+//!
+//! Then `TestClassExt` extension trait will be generated contained appropriate function calling
+//! `TestClass::get_field_impl`. We must provide this implementing function:
+//!
+//! ```
+//! impl TestClass {
+//!     fn get_field_impl(this: &Rc<dyn TTestClass>) -> Rc<String> {
+//!         this.test_class().field.clone()
+//!     }
+//! }
+//! ```
+
 #![no_std]
 
 extern crate alloc;
@@ -7,6 +126,39 @@ extern crate alloc;
 #[doc(hidden)]
 pub use macro_magic;
 
+/// Generates class and appropriate helper types and traits.
+///
+/// Usage:
+///
+/// ```
+/// #[class_unsafe(inherits_ParentClass)]
+/// struct Class {
+///     field: FieldType,
+///     #[non_virt]
+///     non_virtual_method: fn(args: ArgsType) -> ResultType,
+///     #[virt]
+///     virtual_method: fn(args: ArgsType) -> ResultType,
+///     #[over]
+///     parent_virtual_method: (),
+/// }
+///
+/// impl Class {
+///     fn non_virtual_method_impl(this: Rc<dyn TClass>, args: ArgsType) -> ResultType {
+///         ...
+///     }
+///
+///     fn virtual_method_impl(this: Rc<dyn TClass>, args: ArgsType) -> ResultType {
+///         ...
+///     }
+///
+///     fn parent_virtual_method_impl(this: Rc<dyn TParentClass>, args: ArgsType) -> ResultType {
+///         let base_result = ParentClass::parent_virtual_method_impl(this, args);
+///         ...
+///     }
+/// }
+/// ```
+///
+/// For a more detailed overview, please refer to the crate documentation.
 pub use basic_oop_macro::class_unsafe;
 
 pub use basic_oop_macro::class_sync_unsafe;
@@ -28,12 +180,24 @@ pub use dynamic_cast::dyn_cast_arc as dynamic_cast_dyn_cast_arc;
 
 pub type Vtable = *const *const ();
 
+#[doc(hidden)]
 #[repr(C)]
 pub struct VtableJoin<const A: usize, const B: usize> {
     pub a: [*const (); A],
     pub b: [*const (); B],
 }
 
+/// Imports base class into the current scope so that it can be inherited from.
+///
+/// The macro accepts input in the following form:
+///
+/// ```
+/// $vis:vis $class:ident :
+/// use $([$base:ident $path:path])+ ;
+/// $(use $($custom_use:tt)+ ; )*
+/// ```
+///
+/// See module documentation for explanation how to use it.
 #[macro_export]
 macro_rules! import {
     (

@@ -1,3 +1,5 @@
+#![deny(warnings)]
+
 extern crate proc_macro;
 
 use anycase::{to_pascal, to_snake, to_screaming_snake};
