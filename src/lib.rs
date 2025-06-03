@@ -39,15 +39,14 @@
 //! }
 //! ```
 //! 
-//! Now we can start to define our class using [`class_unsafe`] or [`class_sync_unsafe`] macro.
+//! Now we can start to define our class using [`class_unsafe`] macro.
 //!
-//! Classes defined with the [`class_unsafe`] macro are intended for use with the [`Rc`](alloc::rc::Rc)
-//! smart pointer, while classes defined with [`class_sync_unsafe`] are intended for
-//! [`Arc`](alloc::sync::Arc). It is forbidden to inherit `Rc`-based class from `Arc`-based and
-//! overwise. The [`Obj`](obj::Obj) class is the only class indifferent to the type of smart
-//! pointer, and any class can inherits it.
+//! Classes defined with the [`class_unsafe`] macro are intended for use either with the [`Rc`](alloc::rc::Rc)
+//! smart pointer or with the [`Arc`](alloc::sync::Arc) smart pointer.
+//! The [`Obj`](obj::Obj) class is the only class indifferent to the type of smart
+//! pointer.
 //!
-//! Suppose we don't need reference counter atomicity, and choose `class_unsafe`. Then our class
+//! Suppose we don't need reference counter atomicity. Then our class
 //! definition will be the next:
 //!
 //! ```
