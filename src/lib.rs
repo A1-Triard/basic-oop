@@ -161,8 +161,6 @@ pub use macro_magic;
 /// For a more detailed overview, please refer to the crate documentation.
 pub use basic_oop_macro::class_unsafe;
 
-pub use basic_oop_macro::class_sync_unsafe;
-
 #[doc(hidden)]
 pub use alloc::rc::Rc as alloc_rc_Rc;
 #[doc(hidden)]
@@ -258,7 +256,12 @@ pub mod obj {
     pub mod obj_types { }
 
     #[export_tokens_no_emit]
+    #[non_sync]
     struct inherits_Obj { __class__: Obj }
+
+    #[export_tokens_no_emit]
+    #[sync]
+    struct inherits_Obj_sync { __class__: Obj }
 
     #[derive(Debug, Clone)]
     pub struct Obj {

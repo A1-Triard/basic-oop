@@ -45,6 +45,30 @@ fn parse_base_field_attrs(attrs: &[Attribute]) -> Result<bool, Diagnostic> {
     Ok(is_virtual)
 }
 
+fn parse_base_meta(meta: &Meta) -> Option<bool> {
+    match meta {
+        Meta::Path(path) if
+               path.leading_colon.is_none()
+            && path.segments.len() == 1
+            && path.segments[0].arguments.is_none()
+        => match path.segments[0].ident.to_string().as_ref() {
+            "non_sync" => Some(false),
+            "sync" => Some(true),
+            _ => None
+        },
+        _ => None
+    }
+}
+
+fn parse_base_sync(inherits: &ItemStruct) -> Option<bool> {
+    for attr in &inherits.attrs {
+        if let Some(is_sync) = parse_base_meta(&attr.meta) {
+            return Some(is_sync);
+        }
+    }
+    None
+}
+
 struct Base {
     ty: Path,
     non_virt_methods: Vec<(Ident, TypeBareFn)>,
@@ -249,12 +273,15 @@ impl Class {
 fn build_inherits(
     base_types: &[Base],
     class_name: &Ident,
+    sync: bool,
     non_virt_methods: &[(Ident, TypeBareFn)],
     virt_methods: &[(Ident, TypeBareFn)]
 ) -> ItemStruct {
     let name = Ident::new(&("inherits_".to_string() + &class_name.to_string()), Span::call_site());
+    let sync_name = Ident::new(if sync { "sync" } else { "non_sync" }, Span::call_site());
     let mut struct_: ItemStruct = parse_quote! {
         #[::basic_oop::macro_magic::export_tokens_no_emit]
+        #[#sync_name]
         struct #name {
             __class__: #class_name
         }
@@ -886,11 +913,14 @@ fn build_call_trait(
     }
 }
 
-fn build(inherits: ItemStruct, class: ItemStruct, sync: bool) -> Result<TokenStream, Diagnostic> {
+fn build(inherits: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
+    let Some(sync) = parse_base_sync(&inherits) else {
+        return Err(inherits.span().error("Invalid base class"));
+    };
     let base_types = parse_base_types(inherits)?;
     let class = Class::parse(class)?;
     let new_inherits = build_inherits(
-        &base_types, &class.name, &class.non_virt_methods, &class.virt_methods
+        &base_types, &class.name, sync, &class.non_virt_methods, &class.virt_methods
     );
     let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.fields);
     let trait_ = build_trait(&base_types, &class.vis, &class.name);
@@ -923,21 +953,10 @@ fn build(inherits: ItemStruct, class: ItemStruct, sync: bool) -> Result<TokenStr
 
 #[import_tokens_attr(::basic_oop::macro_magic)]
 #[proc_macro_attribute]
-pub fn class_sync_unsafe(attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let inherits = parse_macro_input!(attr as ItemStruct);
-    let class = parse_macro_input!(input as ItemStruct);
-    match build(inherits, class, true) {
-        Ok(tokens) => tokens.into(),
-        Err(diag) => diag.emit_as_expr_tokens().into(),
-    }
-}
-
-#[import_tokens_attr(::basic_oop::macro_magic)]
-#[proc_macro_attribute]
 pub fn class_unsafe(attr: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let inherits = parse_macro_input!(attr as ItemStruct);
     let class = parse_macro_input!(input as ItemStruct);
-    match build(inherits, class, false) {
+    match build(inherits, class) {
         Ok(tokens) => tokens.into(),
         Err(diag) => diag.emit_as_expr_tokens().into(),
     }
