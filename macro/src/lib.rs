@@ -611,9 +611,11 @@ fn build_vtable(
         #vis struct #vtable_name(pub [*const (); #methods_enum_name::VirtMethodsCount as usize]);
     };
     let mut methods_impl = TokenStream::new();
-    methods_impl.append_separated(virt_methods.iter().map(|(m, _)| {
+    methods_impl.append_separated(virt_methods.iter().map(|(m, ty)| {
+        let ty = actual_method_ty(ty.clone(), class_name, sync);
+        let ty_without_idents = fn_ty_without_idents(ty);
         let impl_name = Ident::new(&(m.to_string() + "_impl"), Span::call_site());
-        quote! { #class_name::#impl_name as *const () }
+        quote! { { let f: #ty_without_idents = #class_name::#impl_name; f as *const () } }
     }), <Token![,]>::default());
     let mut base_vtable = base_types[0].ty.clone();
     patch_path(&mut base_vtable, |x| x + "Vtable");

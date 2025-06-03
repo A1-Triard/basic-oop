@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "basic-oop"
-version = "0.5.0"
+version = "0.5.1"
 #rust-version = "nightly"
 authors = ["warlock <internalmike@gmail.com>"]
 description = "Simple OOP for Rust."
@@ -18,6 +18,6 @@ members = [
 ]
 
 [dependencies]
-basic-oop-macro = { path = "macro", version = "0.5.0" }
+basic-oop-macro = { path = "macro", version = "0.5.1" }
 dynamic-cast = "0.1.5"
 macro_magic = "0.6.0"
