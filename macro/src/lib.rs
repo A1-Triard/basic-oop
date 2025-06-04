@@ -3,7 +3,7 @@
 extern crate proc_macro;
 
 use anycase::{to_pascal, to_snake, to_screaming_snake};
-use indoc::formatdoc;
+use indoc::{formatdoc, indoc};
 use macro_magic::import_tokens_attr;
 use proc_macro2::{TokenStream, Span};
 use proc_macro2_diagnostics::{Diagnostic, SpanDiagnosticExt};
@@ -430,7 +430,17 @@ fn build_struct(
     struct_
 }
 
-fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident) -> TokenStream {
+fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, sync: bool) -> TokenStream {
+    let doc_name = class_name.to_string();
+    let rc = if sync { "arc" } else { "rc" };
+    let doc = formatdoc!("
+        Represents [`{doc_name}`] or any of its inheritors.
+
+        Use `dynamic_cast_{rc}` from `dynamic_cast` crate to convert to or from this trait.
+    ");
+    let method_doc = indoc!("
+        Returns reference to inner data.
+    ");
     let base_type = base_types[0].ty.clone();
     let base_field = Ident::new(
         &to_snake(base_type.segments.last().unwrap().ident.to_string()),
@@ -441,7 +451,9 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident) -> Tok
     let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
     let method_name = Ident::new(&to_snake(class_name.to_string()), Span::call_site());
     let mut trait_ = quote! {
+        #[doc=#doc]
         #vis trait #trait_name: #base_trait {
+            #[doc=#method_doc]
             fn #method_name(&self) -> &#class_name;
         }
 
@@ -1002,7 +1014,7 @@ fn build(inherits: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnos
         &base_types, &class.name, sync, &class.non_virt_methods, &class.virt_methods
     );
     let struct_ = build_struct(&base_types, &class.attrs, &class.vis, &class.name, &class.fields);
-    let trait_ = build_trait(&base_types, &class.vis, &class.name);
+    let trait_ = build_trait(&base_types, &class.vis, &class.name, sync);
     let methods_enum = build_virt_methods_enum(
         &base_types[0].ty, &class.vis, &class.name, &class.virt_methods
     );
