@@ -77,7 +77,7 @@ fn parse_base_types(inherits: ItemStruct) -> Result<Vec<Base>, Diagnostic> {
     let mut res = Vec::new();
     let mut base = None;
     for field in fields.named {
-        if field.ident.as_ref().unwrap().to_string() == "__class__" {
+        if *field.ident.as_ref().unwrap() == "__class__" {
             if let Some(base) = base.take() {
                 res.push(base);
             }
@@ -205,7 +205,7 @@ impl Class {
                 FieldKind::Data => fields.push(field.clone()),
                 FieldKind::NonVirtMethod => {
                     let name = field.ident.clone().unwrap();
-                    if name.to_string() == "__class__" {
+                    if name == "__class__" {
                         return Err(name.span().error("this name is reserved"));
                     }
                     let Type::BareFn(type_fn) = &field.ty else {
@@ -229,7 +229,7 @@ impl Class {
                 },
                 FieldKind::VirtMethod => {
                     let name = field.ident.clone().unwrap();
-                    if name.to_string() == "__class__" {
+                    if name == "__class__" {
                         return Err(name.span().error("this name is reserved"));
                     }
                     let Type::BareFn(type_fn) = &field.ty else {
@@ -602,7 +602,7 @@ fn bare_fn_arg_to_fn_arg(a: &BareFnArg) -> FnArg {
             ident: name.clone(),
             subpat: None
         })),
-        colon_token: colon_token.clone(),
+        colon_token: *colon_token,
         ty: Box::new(a.ty.clone()),
     })
 }
@@ -628,10 +628,10 @@ fn method_signature(ty: &TypeBareFn, name: Ident) -> Signature {
         asyncness: None,
         unsafety: None,
         abi: None,
-        fn_token: ty.fn_token.clone(),
+        fn_token: ty.fn_token,
         ident: name,
         generics,
-        paren_token: ty.paren_token.clone(),
+        paren_token: ty.paren_token,
         inputs: Punctuated::new(),
         variadic: None,
         output: ty.output.clone(),

@@ -4,6 +4,7 @@
 #![doc(test(attr(deny(warnings))))]
 #![doc(test(attr(allow(dead_code))))]
 #![doc(test(attr(allow(unused_variables))))]
+#![allow(clippy::needless_doctest_main)]
 
 //! The crate provides basic tools for writing object-oriented code in Rust.
 //! Very basic: no multiply inheritance, no interfaces
@@ -356,6 +357,7 @@ pub mod obj {
         /// Creates new `Obj` class instance, wrapped in [`Rc`] smart pointer.
         ///
         /// A rarely used function, since it creates `Obj` itself, not one of its inheritors.
+        #[allow(clippy::new_ret_no_self)]
         pub fn new() -> Rc<dyn TObj> {
             Rc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
         }
@@ -370,6 +372,12 @@ pub mod obj {
         /// Creates new `Obj`.
         ///
         /// Intended to be called from inheritors constructors to initialize a base type field.
+        ///
+        /// # Safety
+        ///
+        /// Calling this function is safe iff vtable is empty or
+        /// generated using the [`class_unsafe`] macro on a
+        /// direct or indirect `Obj` inheritor.
         pub unsafe fn new_raw(vtable: Vtable) -> Self {
             Obj { vtable }
         }
@@ -411,6 +419,7 @@ pub mod obj {
         /// Creates [`Obj`] virtual methods table.
         ///
         /// Used by the [`class_unsafe`](crate::class_unsafe) macro, not intended for direct use in code.
+        #[allow(clippy::new_without_default)]
         pub const fn new() -> Self {
             ObjVtable([])
         }
