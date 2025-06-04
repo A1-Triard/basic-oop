@@ -16,6 +16,9 @@ repository = "https://github.com/A1-Triard/basic-oop"
 members = [
     "macro",
 ]
+exclude = [
+    "ensure_no_std",
+]
 
 [dependencies]
 basic-oop-macro = { path = "macro", version = "0.6.0" }
