@@ -1,22 +1,53 @@
-name: Rust
+name: CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ master ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ master ]
+  schedule:
+  - cron: '0 0 * * *'
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
-    runs-on: ubuntu-latest
-
+  main:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-    - uses: actions/checkout@v4
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
-      run: cargo test --verbose
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ matrix.rust }}
+        override: true
+    - run: "rustup component add clippy"
+    - uses: actions/checkout@v2
+    - run: "cargo build --verbose --workspace"
+    - run: "cargo test --verbose --workspace --doc"
+    - run: "cargo doc --verbose --workspace"
+    - run: "cargo build --verbose --workspace --release"
+    - run: "cargo outdated --verbose --workspace --root-deps-only --exit-code 1"
+    - run: "cargo clippy --verbose --workspace"
+  ensure_no_std:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-latest
+          triple: x86_64-unknown-linux-gnu
+        - os: windows-latest
+          triple: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        override: true
+    - run: "rustup component add rust-src --toolchain nightly-${{ matrix.triple }}"
+    - uses: actions/checkout@v2
+    - run: "cargo +nightly build --verbose -Z build-std=core,alloc,panic_abort --target ${{ matrix.triple }} --release"
+      working-directory: ensure_no_std
+    - run: "./ensure_no_std/target/${{ matrix.triple }}/release/ensure_no_std"
