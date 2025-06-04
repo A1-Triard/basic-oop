@@ -16,7 +16,7 @@
 //! class. The only class not having any parent is `Obj` defined in `basic_oop::obj` module. It contains
 //! no fields or methods. Lets import it:
 //!
-//! ```
+//! ```ignore
 //! import! { pub test_class:
 //!     use [obj basic_oop::obj];
 //! }
@@ -31,7 +31,7 @@
 //! All types that we plan to use in the method signatures of our class
 //! should also be imported as unique names. For example:
 //!
-//! ```
+//! ```ignore
 //! import! { pub test_class:
 //!     use [obj basic_oop::obj];
 //!     use std::rc::Rc;
@@ -49,7 +49,7 @@
 //! Suppose we don't need reference counter atomicity. Then our class
 //! definition will be the next:
 //!
-//! ```
+//! ```ignore
 //! #[class_unsafe(inherits_Obj)]
 //! pub struct TestClass { }
 //! ```
@@ -57,7 +57,7 @@
 //! Each class should have two constructors: one for creating this particular class
 //! and one for calling it from the constructor of the inheritor:
 //!
-//! ```
+//! ```ignore
 //! impl TestClass {
 //!     pub fn new() -> Rc<dyn TTestClass> {
 //!         Rc::new(unsafe { Self::new_raw(TEST_CLASS_VTABLE.as_ptr()) })
@@ -73,10 +73,10 @@
 //!
 //! To add a field to class, we just write it in ordinar way:
 //!
-//! ```
+//! ```ignore
 //! #[class_unsafe(inherits_Obj)]
 //! pub struct TestClass {
-//!     field: Rc<String>,
+//!     field: RefCell<Rc<String>>,
 //! }
 //!
 //! impl TestClass {
@@ -87,7 +87,7 @@
 //!     pub unsafe fn new_raw(field: Rc<String>, vtable: Vtable) -> Self {
 //!         TestClass {
 //!             obj: unsafe { Obj::new_raw(vtable) },
-//!             field,
+//!             field: RefCell::new(field),
 //!         }
 //!     }
 //! }
@@ -98,7 +98,7 @@
 //! To add a method, it is needed to specify a fictive field with `#[non_virt]` attribute and
 //! function type:
 //!
-//! ```
+//! ```ignore
 //! #[class_unsafe(inherits_Obj)]
 //! pub struct TestClass {
 //!     ...
@@ -110,17 +110,44 @@
 //! Then `TestClassExt` extension trait will be generated contained appropriate function calling
 //! `TestClass::get_field_impl`. We must provide this implementing function:
 //!
-//! ```
+//! ```ignore
 //! impl TestClass {
 //!     fn get_field_impl(this: &Rc<dyn TTestClass>) -> Rc<String> {
-//!         this.test_class().field.clone()
+//!         this.test_class().field.borrow().clone()
 //!     }
 //! }
 //! ```
+//!
+//! # Virtual methods
+//!
+//! Adding a virtual method is no different from adding a non-virtual method only this time
+//! we use `virt`:
+//!
+//! ```ignore
+//! #[class_unsafe(inherits_Obj)]
+//! pub struct TestClass {
+//!     ...
+//!     #[virt]
+//!     set_field: fn(value: Rc<String>),
+//! }
+//!
+//! impl TestClass {
+//!     fn set_field_impl(this: &Rc<dyn TTestClass>, value: Rc<String>) {
+//!         this.test_class().borrow_mut().field = value;
+//!     }
+//! }
+//! ```
+//!
+//! # Derived class. Method overriding.
+//!
+//!
 
 #![no_std]
 
 extern crate alloc;
+
+#[doc=include_str!("../README.md")]
+type _DocTestReadme = ();
 
 #[doc(hidden)]
 pub use macro_magic;
@@ -129,7 +156,7 @@ pub use macro_magic;
 ///
 /// Usage:
 ///
-/// ```
+/// ```ignore
 /// #[class_unsafe(inherits_ParentClass)]
 /// struct Class {
 ///     field: FieldType,
@@ -188,10 +215,10 @@ pub struct VtableJoin<const A: usize, const B: usize> {
 ///
 /// The macro accepts input in the following form:
 ///
-/// ```
+/// ```ignore
 /// $vis:vis $class:ident :
 /// use $([$base:ident $path:path])+ ;
-/// $(use $($custom_use:tt)+ ; )*
+/// $( $(#[$attr:meta])* use $($custom_use:tt)+ ; )*
 /// ```
 ///
 /// See module documentation for explanation how to use it.
@@ -239,8 +266,9 @@ macro_rules! import_impl {
         $crate::import_impl! { @use [$($t)+] }
     };
     (
-        @use [use $($list:tt)*]
+        @use [$(#[$attr:meta])* use $($list:tt)*]
     ) => {
+        $(#[$attr])*
         pub use $($list)*
     };
 }
