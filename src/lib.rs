@@ -133,14 +133,46 @@
 //!
 //! impl TestClass {
 //!     fn set_field_impl(this: &Rc<dyn TTestClass>, value: Rc<String>) {
-//!         this.test_class().borrow_mut().field = value;
+//!         *this.test_class().field.borrow_mut() = value;
 //!     }
 //! }
 //! ```
 //!
 //! # Derived class. Method overriding.
 //!
+//! Lets import our class and derive another one from it:
 //!
+//! ```ignore
+//! import! { pub derived_class:
+//!     use [test_class crate::test_class];
+//! }
+//!
+//! #[class_unsafe(inherits_TestClass)]
+//! pub struct DerivedClass {
+//! }
+//! ```
+//!
+//! Now we wants to override `set_field`, how we do it? Simple:
+//!
+//! ```ignore
+//! #[class_unsafe(inherits_TestClass)]
+//! pub struct DerivedClass {
+//!     #[over]
+//!     set_field: (),
+//! }
+//!
+//! impl DerivedClass {
+//!     pub fn set_field_impl(this: &Rc<dyn TTestClass>, value: Rc<String>) {
+//!         let value = /* coerce value */;
+//!         TestClass::set_field_impl(this, value);
+//!     }
+//! }
+//! ```
+//!
+//! The type of the overridden function is already known from the base class definition,
+//! so there is no need to re-write it, which is why the type of the phony field is specified as `()`.
+//!
+//! # Using the class.
 
 #![no_std]
 
@@ -202,6 +234,9 @@ pub use dynamic_cast::dyn_cast_rc as dynamic_cast_dyn_cast_rc;
 #[doc(hidden)]
 pub use dynamic_cast::dyn_cast_arc as dynamic_cast_dyn_cast_arc;
 
+/// The pointer to the table containing pointers to class virtual functions.
+///
+/// Use [`class_unsafe`] macro to generate `Vtable`.
 pub type Vtable = *const *const ();
 
 #[doc(hidden)]
@@ -290,6 +325,24 @@ pub mod obj {
     #[sync]
     struct inherits_Obj_sync { __class__: Obj }
 
+    /// Base class, contains no fields or methods.
+    ///
+    /// Use [`import`] and [`class_unsafe`](crate::class_unsafe) macros
+    /// to define a class inherited from `Obj`:
+    ///
+    /// ```ignore
+    /// #[class_unsafe(inherits_Obj)]
+    /// struct Class { }
+    /// ```
+    ///
+    /// for [`Rc`]-based class, or
+    ///
+    /// ```ignore
+    /// #[class_unsafe(inherits_Obj_sync)]
+    /// struct Class { }
+    /// ```
+    ///
+    /// for [`Arc`]-based one.
     #[derive(Debug, Clone)]
     pub struct Obj {
         vtable: Vtable,
@@ -325,15 +378,24 @@ pub mod obj {
         fn obj(&self) -> &Obj { self }
     }
 
+    /// [`Obj`] virtual methods list.
+    ///
+    /// Used by the [`class_unsafe`](crate::class_unsafe) macro, not intended for direct use in code.
     #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
     #[repr(usize)]
     pub enum ObjVirtMethods {
         VirtMethodsCount = 0usize,
     }
 
+    /// [`Obj`] virtual methods table.
+    ///
+    /// Used by the [`class_unsafe`](crate::class_unsafe) macro, not intended for direct use in code.
     pub struct ObjVtable(pub [*const (); ObjVirtMethods::VirtMethodsCount as usize]);
 
     impl ObjVtable {
+        /// Creates [`Obj`] virtual methods table.
+        ///
+        /// Used by the [`class_unsafe`](crate::class_unsafe) macro, not intended for direct use in code.
         pub const fn new() -> Self {
             ObjVtable([])
         }
