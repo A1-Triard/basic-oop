@@ -9,7 +9,7 @@ extern crate alloc;
 
 #[cfg(windows)]
 #[link(name="msvcrt")]
-extern { }
+extern "C" { }
 
 mod no_std {
     use composable_allocators::{AsGlobal, System};
