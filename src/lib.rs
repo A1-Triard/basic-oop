@@ -353,21 +353,36 @@ pub mod obj {
     unsafe impl Sync for Obj { }
 
     impl Obj {
+        /// Creates new `Obj` class instance, wrapped in [`Rc`] smart pointer.
+        ///
+        /// A rarely used function, since it creates `Obj` itself, not one of its inheritors.
         pub fn new() -> Rc<dyn TObj> {
             Rc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
         }
 
+        /// Creates new `Obj` class instance, wrapped in [`Arc`] smart pointer.
+        ///
+        /// A rarely used function, since it creates `Obj` itself, not one of its inheritors.
         pub fn new_sync() -> Arc<dyn TObj> {
             Arc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
         }
 
+        /// Creates new `Obj`.
+        ///
+        /// Intended to be called from inheritors constructors to initialize a base type field.
         pub unsafe fn new_raw(vtable: Vtable) -> Self {
             Obj { vtable }
         }
 
+        /// Returns vtable, passed to the constructor.
         pub fn vtable(&self) -> Vtable { self.vtable }
     }
 
+    /// Represents [`Obj`] or any of its inheritors.
+    ///
+    /// Usually obtained by using
+    /// [`dyn_cast_rc`](dynamic_cast::dyn_cast_rc)/[`dyn_cast_arc`](dynamic_cast::dyn_cast_arc)
+    /// on a derived trait.
     pub trait TObj: SupportsInterfaces {
         fn obj(&self) -> &Obj;
     }
