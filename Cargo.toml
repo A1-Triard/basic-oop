@@ -22,5 +22,5 @@ exclude = [
 
 [dependencies]
 basic-oop-macro = { path = "macro", version = "0.6.0" }
-dynamic-cast = "0.1.5"
+dynamic-cast = "0.1.6"
 macro_magic = "0.6.0"

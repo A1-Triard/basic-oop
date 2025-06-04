@@ -25,6 +25,7 @@ jobs:
         override: true
     - run: "rustup component add clippy"
     - run: "curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash"
+      if: ${{ matrix.os == 'ubuntu-latest' }}
     - uses: actions/checkout@v2
     - run: "cargo build --verbose --workspace"
     - run: "cargo test --verbose --workspace --doc"
