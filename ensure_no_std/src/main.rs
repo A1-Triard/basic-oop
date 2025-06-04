@@ -62,7 +62,7 @@ impl TestClass {
 }
 
 #[no_mangle]
-extern "C" fn main(_argc: c_int, _argv: *const *const c_char) -> c_int {
+extern "C" fn main(_argc: c_int, _argv: *mut *mut c_char) -> c_int {
     let class = TestClass::new(5);
     class.inc_field();
     assert_eq!(class.test_class().field.get(), 6);
