@@ -45,7 +45,7 @@ struct TestClass {
 }
 
 impl TestClass {
-    fn new(field: u8) -> Rc<dyn TTestClass> {
+    fn new(field: u8) -> Rc<dyn IsTestClass> {
         Rc::new(unsafe { Self::new_raw(field, TEST_CLASS_VTABLE.as_ptr()) })
     }
 
@@ -56,7 +56,7 @@ impl TestClass {
         }
     }
 
-    fn inc_field_impl(this: &Rc<dyn TTestClass>) {
+    fn inc_field_impl(this: &Rc<dyn IsTestClass>) {
         this.test_class().field.update(|x| x + 1);
     }
 }
