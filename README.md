@@ -28,7 +28,7 @@ mod test_class {
     }
 
     impl TestClass {
-        pub fn new(field: Rc<String>) -> Rc<dyn TTestClass> {
+        pub fn new(field: Rc<String>) -> Rc<dyn IsTestClass> {
             Rc::new(unsafe { Self::new_raw(field, TEST_CLASS_VTABLE.as_ptr()) })
         }
 
@@ -39,11 +39,11 @@ mod test_class {
             }
         }
 
-        pub fn get_field_impl(this: &Rc<dyn TTestClass>) -> Rc<String> {
+        pub fn get_field_impl(this: &Rc<dyn IsTestClass>) -> Rc<String> {
             this.test_class().field.borrow().clone()
         }
 
-        pub fn set_field_impl(this: &Rc<dyn TTestClass>, value: Rc<String>) {
+        pub fn set_field_impl(this: &Rc<dyn IsTestClass>, value: Rc<String>) {
             *this.test_class().field.borrow_mut() = value;
         }
     }
@@ -66,7 +66,7 @@ mod derived_class {
     }
 
     impl DerivedClass {
-        pub fn new(field: Rc<String>) -> Rc<dyn TDerivedClass> {
+        pub fn new(field: Rc<String>) -> Rc<dyn IsDerivedClass> {
             Rc::new(unsafe { Self::new_raw(field, DERIVED_CLASS_VTABLE.as_ptr()) })
         }
 
@@ -76,13 +76,13 @@ mod derived_class {
             }
         }
 
-        pub fn coerce_field_impl(_this: &Rc<dyn TDerivedClass>, value: Rc<String>) -> Rc<String> {
+        pub fn coerce_field_impl(_this: &Rc<dyn IsDerivedClass>, value: Rc<String>) -> Rc<String> {
             Rc::new(value.as_ref().clone() + " coerced")
         }
 
-        pub fn set_field_impl(this: &Rc<dyn TTestClass>, value: Rc<String>) {
+        pub fn set_field_impl(this: &Rc<dyn IsTestClass>, value: Rc<String>) {
             let value = {
-                let this: Rc<dyn TDerivedClass> = dyn_cast_rc(this.clone()).unwrap();
+                let this: Rc<dyn IsDerivedClass> = dyn_cast_rc(this.clone()).unwrap();
                 this.coerce_field(value)
             };
             TestClass::set_field_impl(this, value);
@@ -93,11 +93,11 @@ mod derived_class {
 use derived_class::DerivedClass;
 use dynamic_cast::dyn_cast_rc;
 use std::rc::Rc;
-use test_class::{TTestClass, TestClassExt};
+use test_class::{IsTestClass, TestClassExt};
 
 fn main() {
     let class = DerivedClass::new(Rc::new("initial".to_string()));
-    let base_class: Rc<dyn TTestClass> = dyn_cast_rc(class).unwrap();
+    let base_class: Rc<dyn IsTestClass> = dyn_cast_rc(class).unwrap();
     assert_eq!(base_class.get_field().as_ref(), "initial");
     base_class.set_field(Rc::new("changed".to_string()));
     assert_eq!(base_class.get_field().as_ref(), "changed coerced");
