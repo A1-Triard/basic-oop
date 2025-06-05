@@ -447,8 +447,8 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, sync: 
         Span::call_site()
     );
     let mut base_trait = base_types[0].ty.clone();
-    patch_path(&mut base_trait, |x| "T".to_string() + &x);
-    let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
+    patch_path(&mut base_trait, |x| "Is".to_string() + &x);
+    let trait_name = Ident::new(&("Is".to_string() + &class_name.to_string()), Span::call_site());
     let method_name = Ident::new(&to_snake(class_name.to_string()), Span::call_site());
     let mut trait_ = quote! {
         #[doc=#doc]
@@ -471,7 +471,7 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, sync: 
             Span::call_site()
         );
         let mut base_base_trait = base_base_type.ty.clone();
-        patch_path(&mut base_base_trait, |x| "T".to_string() + &x);
+        patch_path(&mut base_base_trait, |x| "Is".to_string() + &x);
         let base_base_type_ty = &base_base_type.ty;
         trait_.extend(quote! {
             impl #base_base_trait for #class_name {
@@ -493,7 +493,7 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, sync: 
     traits_list.push(trait_path);
     for base_type in base_types {
         let mut base_trait = base_type.ty.clone();
-        patch_path(&mut base_trait, |x| "T".to_string() + &x);
+        patch_path(&mut base_trait, |x| "Is".to_string() + &x);
         traits_list.push(base_trait);
     }
     trait_.extend(quote! {
@@ -570,7 +570,7 @@ fn actual_base_method_ty(mut ty: TypeBareFn, base_type: &Path, sync: bool) -> Ty
         quote! { ::basic_oop::alloc_rc_Rc }
     };
     let mut base_trait = base_type.clone();
-    patch_path(&mut base_trait, |x| "T".to_string() + &x);
+    patch_path(&mut base_trait, |x| "Is".to_string() + &x);
     let this_arg = BareFnArg {
         attrs: Vec::new(),
         name: Some((Ident::new("this", Span::call_site()), <Token![:]>::default())),
@@ -586,7 +586,7 @@ fn actual_method_ty(mut ty: TypeBareFn, class_name: &Ident, sync: bool) -> TypeB
     } else {
         quote! { ::basic_oop::alloc_rc_Rc }
     };
-    let trait_name = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
+    let trait_name = Ident::new(&("Is".to_string() + &class_name.to_string()), Span::call_site());
     let this_arg = BareFnArg {
         attrs: Vec::new(),
         name: Some((Ident::new("this", Span::call_site()), <Token![:]>::default())),
@@ -849,7 +849,7 @@ fn build_methods(
     for base_type in base_types {
         let base_type_ty = base_type.ty.clone();
         let mut base_trait = base_type_ty.clone();
-        patch_path(&mut base_trait, |x| "T".to_string() + &x);
+        patch_path(&mut base_trait, |x| "Is".to_string() + &x);
         let mut base_trait_ext = base_type_ty.clone();
         patch_path(&mut base_trait_ext, |x| x + "Ext");
         for (method_name, method_ty, _) in base_type.non_virt_methods.iter().chain(base_type.virt_methods.iter()) {
@@ -908,7 +908,7 @@ fn build_methods(
         let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
         let mut item: ImplItemFn = parse_quote! {
             #signature {
-                let vtable = ::basic_oop::obj::TObj::obj(self.as_ref()).vtable();
+                let vtable = ::basic_oop::obj::IsObj::obj(self.as_ref()).vtable();
                 let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
                     *vtable.add(#methods_enum_name::#name as usize)
                 ) };
@@ -931,7 +931,7 @@ fn build_methods(
         item.to_tokens(&mut methods_tokens);
     }
     let trait_name = Ident::new(&(class_name.to_string() + "Ext"), Span::call_site());
-    let t = Ident::new(&("T".to_string() + &class_name.to_string()), Span::call_site());
+    let t = Ident::new(&("Is".to_string() + &class_name.to_string()), Span::call_site());
     quote! {
         impl #trait_name for #rc<dyn #t> {
             #methods_tokens

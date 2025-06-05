@@ -60,7 +60,7 @@
 //!
 //! ```ignore
 //! impl TestClass {
-//!     pub fn new() -> Rc<dyn TTestClass> {
+//!     pub fn new() -> Rc<dyn IsTestClass> {
 //!         Rc::new(unsafe { Self::new_raw(TEST_CLASS_VTABLE.as_ptr()) })
 //!     }
 //!
@@ -81,7 +81,7 @@
 //! }
 //!
 //! impl TestClass {
-//!     pub fn new(field: Rc<String>) -> Rc<dyn TTestClass> {
+//!     pub fn new(field: Rc<String>) -> Rc<dyn IsTestClass> {
 //!         Rc::new(unsafe { Self::new_raw(field, TEST_CLASS_VTABLE.as_ptr()) })
 //!     }
 //!
@@ -113,7 +113,7 @@
 //!
 //! ```ignore
 //! impl TestClass {
-//!     fn get_field_impl(this: &Rc<dyn TTestClass>) -> Rc<String> {
+//!     fn get_field_impl(this: &Rc<dyn IsTestClass>) -> Rc<String> {
 //!         this.test_class().field.borrow().clone()
 //!     }
 //! }
@@ -133,7 +133,7 @@
 //! }
 //!
 //! impl TestClass {
-//!     fn set_field_impl(this: &Rc<dyn TTestClass>, value: Rc<String>) {
+//!     fn set_field_impl(this: &Rc<dyn IsTestClass>, value: Rc<String>) {
 //!         *this.test_class().field.borrow_mut() = value;
 //!     }
 //! }
@@ -163,7 +163,7 @@
 //! }
 //!
 //! impl DerivedClass {
-//!     pub fn set_field_impl(this: &Rc<dyn TTestClass>, value: Rc<String>) {
+//!     pub fn set_field_impl(this: &Rc<dyn IsTestClass>, value: Rc<String>) {
 //!         let value = /* coerce value */;
 //!         TestClass::set_field_impl(this, value);
 //!     }
@@ -184,7 +184,7 @@
 //! We can cast it to base class:
 //!
 //! ```ignore
-//! let base_class: Rc<dyn TTestClass> = dyn_cast_rc(class).unwrap();
+//! let base_class: Rc<dyn IsTestClass> = dyn_cast_rc(class).unwrap();
 //! ```
 //!
 //! We can call both virtual and non-virtual methods:
@@ -234,15 +234,15 @@ pub use macro_magic;
 /// }
 ///
 /// impl Class {
-///     fn non_virtual_method_impl(this: Rc<dyn TClass>, args: ArgsType) -> ResultType {
+///     fn non_virtual_method_impl(this: Rc<dyn IsClass>, args: ArgsType) -> ResultType {
 ///         ...
 ///     }
 ///
-///     fn virtual_method_impl(this: Rc<dyn TClass>, args: ArgsType) -> ResultType {
+///     fn virtual_method_impl(this: Rc<dyn IsClass>, args: ArgsType) -> ResultType {
 ///         ...
 ///     }
 ///
-///     fn parent_virtual_method_impl(this: Rc<dyn TParentClass>, args: ArgsType) -> ResultType {
+///     fn parent_virtual_method_impl(this: Rc<dyn IsParentClass>, args: ArgsType) -> ResultType {
 ///         let base_result = ParentClass::parent_virtual_method_impl(this, args);
 ///         ...
 ///     }
@@ -273,7 +273,7 @@ pub use macro_magic;
 /// pub struct SomeClass { }
 ///
 /// impl SomeClass {
-///     pub fn new(param: ParamType) -> Rc<dyn TSomeClass> {
+///     pub fn new(param: ParamType) -> Rc<dyn IsSomeClass> {
 ///         Rc::new(unsafe { Self::new_raw(param, SOME_CLASS_VTABLE.as_ptr()) })
 ///     }
 ///
@@ -429,14 +429,14 @@ pub mod obj {
         ///
         /// A rarely used function, since it creates `Obj` itself, not one of its inheritors.
         #[allow(clippy::new_ret_no_self)]
-        pub fn new() -> Rc<dyn TObj> {
+        pub fn new() -> Rc<dyn IsObj> {
             Rc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
         }
 
         /// Creates new `Obj` class instance, wrapped in [`Arc`] smart pointer.
         ///
         /// A rarely used function, since it creates `Obj` itself, not one of its inheritors.
-        pub fn new_sync() -> Arc<dyn TObj> {
+        pub fn new_sync() -> Arc<dyn IsObj> {
             Arc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
         }
 
@@ -462,14 +462,14 @@ pub mod obj {
     /// Usually obtained by using
     /// [`dyn_cast_rc`](dynamic_cast::dyn_cast_rc)/[`dyn_cast_arc`](dynamic_cast::dyn_cast_arc)
     /// on a derived trait.
-    pub trait TObj: SupportsInterfaces {
+    pub trait IsObj: SupportsInterfaces {
         /// Returns reference to inner data.
         fn obj(&self) -> &Obj;
     }
 
-    impl_supports_interfaces!(Obj: TObj);
+    impl_supports_interfaces!(Obj: IsObj);
 
-    impl TObj for Obj {
+    impl IsObj for Obj {
         fn obj(&self) -> &Obj { self }
     }
 
