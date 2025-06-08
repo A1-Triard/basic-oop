@@ -441,28 +441,40 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, sync: 
     let method_doc = indoc!("
         Returns reference to inner data.
     ");
+    let into_method_doc = indoc!("
+        Converts to inner data.
+    ");
     let base_type = base_types[0].ty.clone();
     let base_field = Ident::new(
         &to_snake(base_type.segments.last().unwrap().ident.to_string()),
         Span::call_site()
     );
+    let into_base = Ident::new(&("into_".to_string() + &base_field.to_string()), Span::call_site());
     let mut base_trait = base_types[0].ty.clone();
     patch_path(&mut base_trait, |x| "Is".to_string() + &x);
     let trait_name = Ident::new(&("Is".to_string() + &class_name.to_string()), Span::call_site());
     let method_name = Ident::new(&to_snake(class_name.to_string()), Span::call_site());
+    let into_method_name = Ident::new(&("into_".to_string() + &to_snake(class_name.to_string())), Span::call_site());
     let mut trait_ = quote! {
         #[doc=#doc]
         #vis trait #trait_name: #base_trait {
             #[doc=#method_doc]
             fn #method_name(&self) -> &#class_name;
+
+            #[doc=#into_method_doc]
+            fn #into_method_name(self) -> #class_name where Self: Sized;
         }
 
         impl #trait_name for #class_name {
             fn #method_name(&self) -> &#class_name { self }
+
+            fn #into_method_name(self) -> #class_name { self }
         }
 
         impl #base_trait for #class_name {
             fn #base_field(&self) -> &#base_type { &self.#base_field }
+
+            fn #into_base(self) -> #base_type { self.#base_field }
         }
     };
     for base_base_type in base_types.iter().skip(1) {
@@ -470,6 +482,7 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, sync: 
             &to_snake(base_base_type.ty.segments.last().unwrap().ident.to_string()),
             Span::call_site()
         );
+        let into_name = Ident::new(&("into_".to_string() + &method_name.to_string()), Span::call_site());
         let mut base_base_trait = base_base_type.ty.clone();
         patch_path(&mut base_base_trait, |x| "Is".to_string() + &x);
         let base_base_type_ty = &base_base_type.ty;
@@ -477,6 +490,10 @@ fn build_trait(base_types: &[Base], vis: &Visibility, class_name: &Ident, sync: 
             impl #base_base_trait for #class_name {
                 fn #method_name(&self) -> &#base_base_type_ty {
                     #base_base_trait::#method_name(&self.#base_field)
+                }
+
+                fn #into_name(self) -> #base_base_type_ty {
+                    #base_base_trait::#into_name(self.#base_field)
                 }
             }
         });
@@ -906,13 +923,25 @@ fn build_methods(
         let signature = method_signature(&ty, method_name.clone());
         let ty_without_idents = fn_ty_without_idents(ty.clone());
         let name = Ident::new(&to_pascal(method_name.to_string()), Span::call_site());
-        let mut item: ImplItemFn = parse_quote! {
-            #signature {
-                let vtable = ::basic_oop::obj::IsObj::obj(self.as_ref()).vtable();
-                let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
-                    *vtable.add(#methods_enum_name::#name as usize)
-                ) };
-                method(self)
+        let mut item: ImplItemFn = if sync {
+            parse_quote! {
+                #signature {
+                    let vtable = ::basic_oop::obj_sync::IsObjSync::obj_sync(self.as_ref()).vtable();
+                    let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
+                        *vtable.add(#methods_enum_name::#name as usize)
+                    ) };
+                    method(self)
+                }
+            }
+        } else {
+            parse_quote! {
+                #signature {
+                    let vtable = ::basic_oop::obj::IsObj::obj(self.as_ref()).vtable();
+                    let method = unsafe { ::basic_oop::core_mem_transmute::<*const (), #ty_without_idents>(
+                        *vtable.add(#methods_enum_name::#name as usize)
+                    ) };
+                    method(self)
+                }
             }
         };
         let Stmt::Expr(Expr::Call(call), _) = item.block.stmts.last_mut().unwrap() else { panic!() };

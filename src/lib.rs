@@ -44,8 +44,6 @@
 //!
 //! Classes defined with the [`class_unsafe`] macro are intended for use either with the [`Rc`](alloc::rc::Rc)
 //! smart pointer or with the [`Arc`](alloc::sync::Arc) smart pointer.
-//! The [`Obj`](obj::Obj) class is the only class indifferent to the type of smart
-//! pointer.
 //!
 //! Suppose we don't need reference counter atomicity. Then our class
 //! definition will be the next:
@@ -200,10 +198,14 @@
 //! # Arc-based classes
 //!
 //! To get a class based on [`Arc`](alloc::sync::Arc) instead of [`Rc`](alloc::rc::Rc),
-//! use the following form of inheritance from [`Obj`](obj::Obj):
+//! use use [`ObjSync`](obj_sync::ObjSync) instead of [`Obj`](obj::Obj):
 //!
 //! ```ignore
-//! #[class_unsafe(inherits_Obj_sync)]
+//! import! { pub test_class:
+//!     use [obj_sync basic_oop::obj_sync];
+//!     ...
+//! }
+//! #[class_unsafe(inherits_ObjSync)]
 //! pub struct TestClass { }
 //! ```
 
@@ -378,7 +380,7 @@ macro_rules! import_impl {
 
 pub mod obj {
     use alloc::rc::Rc;
-    use alloc::sync::Arc;
+    use downcast_rs::{Downcast, impl_downcast};
     use dynamic_cast::{SupportsInterfaces, impl_supports_interfaces};
     use macro_magic::export_tokens_no_emit;
     use crate::Vtable;
@@ -393,11 +395,7 @@ pub mod obj {
     #[non_sync]
     struct inherits_Obj { __class__: Obj }
 
-    #[export_tokens_no_emit]
-    #[sync]
-    struct inherits_Obj_sync { __class__: Obj }
-
-    /// Base class, contains no fields or methods.
+    /// Base class, contains no fields or methods. For [`Rc`]-based classes.
     ///
     /// Use [`import`] and [`class_unsafe`](crate::class_unsafe) macros
     /// to define a class inherited from `Obj`:
@@ -406,15 +404,6 @@ pub mod obj {
     /// #[class_unsafe(inherits_Obj)]
     /// struct Class { }
     /// ```
-    ///
-    /// for [`Rc`]-based class, or
-    ///
-    /// ```ignore
-    /// #[class_unsafe(inherits_Obj_sync)]
-    /// struct Class { }
-    /// ```
-    ///
-    /// for [`Arc`]-based one.
     #[derive(Debug, Clone)]
     pub struct Obj {
         vtable: Vtable,
@@ -431,13 +420,6 @@ pub mod obj {
         #[allow(clippy::new_ret_no_self)]
         pub fn new() -> Rc<dyn IsObj> {
             Rc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
-        }
-
-        /// Creates new `Obj` class instance, wrapped in [`Arc`] smart pointer.
-        ///
-        /// A rarely used function, since it creates `Obj` itself, not one of its inheritors.
-        pub fn new_sync() -> Arc<dyn IsObj> {
-            Arc::new(unsafe { Self::new_raw(OBJ_VTABLE.as_ptr()) })
         }
 
         /// Creates new `Obj`.
@@ -460,17 +442,24 @@ pub mod obj {
     /// Represents [`Obj`] or any of its inheritors.
     ///
     /// Usually obtained by using
-    /// [`dyn_cast_rc`](dynamic_cast::dyn_cast_rc)/[`dyn_cast_arc`](dynamic_cast::dyn_cast_arc)
+    /// [`dyn_cast_rc`](dynamic_cast::dyn_cast_rc)
     /// on a derived trait.
-    pub trait IsObj: SupportsInterfaces {
+    pub trait IsObj: SupportsInterfaces + Downcast {
         /// Returns reference to inner data.
         fn obj(&self) -> &Obj;
+
+        /// Converts to inner data.
+        fn into_obj(self) -> Obj where Self: Sized;
     }
 
     impl_supports_interfaces!(Obj: IsObj);
 
+    impl_downcast!(IsObj);
+
     impl IsObj for Obj {
         fn obj(&self) -> &Obj { self }
+
+        fn into_obj(self) -> Obj { self }
     }
 
     /// [`Obj`] virtual methods list.
@@ -498,4 +487,114 @@ pub mod obj {
     }
 
     const OBJ_VTABLE: [*const (); ObjVirtMethods::VirtMethodsCount as usize] = ObjVtable::new().0;
+}
+
+pub mod obj_sync {
+    use alloc::sync::Arc;
+    use downcast_rs::{DowncastSync, impl_downcast};
+    use dynamic_cast::{SupportsInterfaces, impl_supports_interfaces};
+    use macro_magic::export_tokens_no_emit;
+    use crate::Vtable;
+
+    pub mod obj_sync_types {
+        //! Some reexported types and other things.
+        //!
+        //! Used by the [`import`] macro, not intended for direct use in code.
+    }
+
+    #[export_tokens_no_emit]
+    #[sync]
+    struct inherits_ObjSync { __class__: ObjSync }
+
+    /// Base class, contains no fields or methods. For [`Arc`]-based classes.
+    ///
+    /// Use [`import`] and [`class_unsafe`](crate::class_unsafe) macros
+    /// to define a class inherited from `ObjSync`:
+    ///
+    /// ```ignore
+    /// #[class_unsafe(inherits_ObjSync)]
+    /// struct Class { }
+    /// ```
+    #[derive(Debug, Clone)]
+    pub struct ObjSync {
+        vtable: Vtable,
+    }
+
+    unsafe impl Send for ObjSync { }
+
+    unsafe impl Sync for ObjSync { }
+
+    impl ObjSync {
+        /// Creates new `ObjSync` class instance, wrapped in [`Arc`] smart pointer.
+        ///
+        /// A rarely used function, since it creates `ObjSync` itself, not one of its inheritors.
+        pub fn new() -> Arc<dyn IsObjSync> {
+            Arc::new(unsafe { Self::new_raw(OBJ_SYNC_VTABLE.as_ptr()) })
+        }
+
+        /// Creates new `ObjSync`.
+        ///
+        /// Intended to be called from inheritors constructors to initialize a base type field.
+        ///
+        /// # Safety
+        ///
+        /// Calling this function is safe iff vtable is empty or
+        /// generated using the [`class_unsafe`](crate::class_unsafe) macro on a
+        /// direct or indirect `ObjSync` inheritor.
+        pub unsafe fn new_raw(vtable: Vtable) -> Self {
+            ObjSync { vtable }
+        }
+
+        /// Returns vtable, passed to the constructor.
+        pub fn vtable(&self) -> Vtable { self.vtable }
+    }
+
+    /// Represents [`ObjSync`] or any of its inheritors.
+    ///
+    /// Usually obtained by using
+    /// [`dyn_cast_arc`](dynamic_cast::dyn_cast_arc)
+    /// on a derived trait.
+    pub trait IsObjSync: SupportsInterfaces + DowncastSync {
+        /// Returns reference to inner data.
+        fn obj_sync(&self) -> &ObjSync;
+
+        /// Converts to inner data.
+        fn into_obj_sync(self) -> ObjSync where Self: Sized;
+    }
+
+    impl_supports_interfaces!(ObjSync: IsObjSync);
+
+    impl_downcast!(sync IsObjSync);
+
+    impl IsObjSync for ObjSync {
+        fn obj_sync(&self) -> &ObjSync { self }
+
+        fn into_obj_sync(self) -> ObjSync { self }
+    }
+
+    /// [`ObjSync`] virtual methods list.
+    ///
+    /// Used by the [`class_unsafe`](crate::class_unsafe) macro, not intended for direct use in code.
+    #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+    #[repr(usize)]
+    pub enum ObjSyncVirtMethods {
+        VirtMethodsCount = 0usize,
+    }
+
+    /// [`ObjSync`] virtual methods table.
+    ///
+    /// Used by the [`class_unsafe`](crate::class_unsafe) macro, not intended for direct use in code.
+    pub struct ObjSyncVtable(pub [*const (); ObjSyncVirtMethods::VirtMethodsCount as usize]);
+
+    impl ObjSyncVtable {
+        /// Creates [`ObjSync`] virtual methods table.
+        ///
+        /// Used by the [`class_unsafe`](crate::class_unsafe) macro, not intended for direct use in code.
+        #[allow(clippy::new_without_default)]
+        pub const fn new() -> Self {
+            ObjSyncVtable([])
+        }
+    }
+
+    const OBJ_SYNC_VTABLE: [*const (); ObjSyncVirtMethods::VirtMethodsCount as usize] = ObjSyncVtable::new().0;
 }
