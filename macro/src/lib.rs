@@ -1081,10 +1081,8 @@ fn build_not_overrided_virt_methods(
         return TokenStream::new();
     }
     let mut methods_tokens = TokenStream::new();
+    let base_type_ty = &base_types[0].ty;
     for base_type in base_types {
-        let base_type_ty = base_type.ty.clone();
-        let mut base_trait = base_type_ty.clone();
-        patch_path(&mut base_trait, |x| "Is".to_string() + &x);
         for (method_name, method_ty, _) in &base_type.virt_methods {
             if overrides.iter().any(|x| *x == method_name.to_string().as_str()) { continue; }
             let impl_method_name = Ident::new(&(method_name.to_string() + "_impl"), Span::call_site());
