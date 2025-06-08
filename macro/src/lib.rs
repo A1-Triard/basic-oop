@@ -695,6 +695,41 @@ fn method_signature(ty: &TypeBareFn, name: Ident) -> Signature {
     s
 }
 
+fn impl_method_signature(ty: &TypeBareFn, name: Ident) -> Signature {
+    let generics = if let Some(lifetimes) = &ty.lifetimes {
+        Generics {
+            lt_token: Some(lifetimes.lt_token),
+            params: lifetimes.lifetimes.clone(),
+            gt_token: Some(lifetimes.gt_token),
+            where_clause: None,
+        }
+    } else {
+        Generics {
+            lt_token: None,
+            params: Punctuated::new(),
+            gt_token: None,
+            where_clause: None,
+        }
+    };
+    let mut s = Signature {
+        constness: None,
+        asyncness: None,
+        unsafety: None,
+        abi: None,
+        fn_token: ty.fn_token,
+        ident: name,
+        generics,
+        paren_token: ty.paren_token,
+        inputs: Punctuated::new(),
+        variadic: None,
+        output: ty.output.clone(),
+    };
+    for arg in ty.inputs.iter() {
+        s.inputs.push(bare_fn_arg_to_fn_arg(arg));
+    }
+    s
+}
+
 fn build_vtable(
     base_types: &[Base],
     class_name: &Ident,
@@ -1033,6 +1068,56 @@ fn build_call_trait(
     }
 }
 
+fn build_not_overrided_virt_methods(
+    base_types: &[Base],
+    vis: &Visibility,
+    class_name: &Ident,
+    sync: bool,
+    overrides: &[Ident],
+) -> TokenStream {
+    if !base_types.iter().any(|x|
+        x.virt_methods.iter().any(|m| !overrides.iter().any(|x| *x == m.0.to_string().as_str()))
+    ) {
+        return TokenStream::new();
+    }
+    let mut methods_tokens = TokenStream::new();
+    for base_type in base_types {
+        let base_type_ty = base_type.ty.clone();
+        let mut base_trait = base_type_ty.clone();
+        patch_path(&mut base_trait, |x| "Is".to_string() + &x);
+        for (method_name, method_ty, _) in &base_type.virt_methods {
+            if overrides.iter().any(|x| *x == method_name.to_string().as_str()) { continue; }
+            let impl_method_name = Ident::new(&(method_name.to_string() + "_impl"), Span::call_site());
+            let ty = actual_method_ty(method_ty.clone(), &base_type.ty.segments.last().unwrap().ident, sync);
+            let signature = impl_method_signature(&ty, impl_method_name.clone());
+            let mut item: ImplItemFn = parse_quote! {
+                #vis #signature {
+                    #base_type_ty::#impl_method_name(this)
+                }
+            };
+            let Stmt::Expr(Expr::Call(call), _) = item.block.stmts.last_mut().unwrap() else { panic!() };
+            for arg in ty.inputs.iter().skip(1) {
+                let mut segments = Punctuated::new();
+                segments.push(PathSegment {
+                    ident: arg.name.clone().unwrap().0,
+                    arguments: PathArguments::None,
+                });
+                call.args.push(Expr::Path(ExprPath {
+                    attrs: Vec::new(),
+                    qself: None,
+                    path: Path { leading_colon: None, segments },
+                }));
+            }
+            item.to_tokens(&mut methods_tokens);
+        }
+    }
+    quote! {
+        impl #class_name {
+            #methods_tokens
+        }
+    }
+}
+
 fn build(inherits: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnostic> {
     let Some(sync) = parse_base_sync(&inherits) else {
         return Err(inherits.span().error("Invalid base class"));
@@ -1058,6 +1143,9 @@ fn build(inherits: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnos
     let methods = build_methods(
         &base_types, &class.name, sync, &class.non_virt_methods, &class.virt_methods
     );
+    let not_overrided_methods = build_not_overrided_virt_methods(
+        &base_types, &class.vis, &class.name, sync, &class.overrides
+    );
     Ok(quote! {
         #new_inherits
         #struct_
@@ -1068,6 +1156,7 @@ fn build(inherits: ItemStruct, class: ItemStruct) -> Result<TokenStream, Diagnos
         #vtable_const
         #call_trait
         #methods
+        #not_overrided_methods
     })
 }
 
