@@ -528,6 +528,7 @@ pub mod obj_sync {
         /// Creates new `ObjSync` class instance, wrapped in [`Arc`] smart pointer.
         ///
         /// A rarely used function, since it creates `ObjSync` itself, not one of its inheritors.
+        #[allow(clippy::new_ret_no_self)]
         pub fn new() -> Arc<dyn IsObjSync> {
             Arc::new(unsafe { Self::new_raw(OBJ_SYNC_VTABLE.as_ptr()) })
         }
