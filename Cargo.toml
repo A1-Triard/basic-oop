@@ -1,7 +1,7 @@
 [package]
 edition = "2024"
 name = "basic-oop"
-version = "0.8.1"
+version = "0.8.2"
 #rust-version = "nightly"
 authors = ["warlock <internalmike@gmail.com>"]
 description = "Simple OOP for Rust."
@@ -21,7 +21,7 @@ exclude = [
 ]
 
 [dependencies]
-basic-oop-macro = { path = "macro", version = "0.8.1" }
+basic-oop-macro = { path = "macro", version = "0.8.2" }
 downcast-rs = { version = "2.0.1", default-features = false, features = ["sync"] }
 dynamic-cast = "0.2.0"
 macro_magic = "0.6.0"

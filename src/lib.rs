@@ -296,10 +296,6 @@ pub use core::mem::transmute as core_mem_transmute;
 pub use dynamic_cast::SupportsInterfaces as dynamic_cast_SupportsInterfaces;
 #[doc(hidden)]
 pub use dynamic_cast::impl_supports_interfaces as dynamic_cast_impl_supports_interfaces;
-#[doc(hidden)]
-pub use dynamic_cast::dyn_cast_rc as dynamic_cast_dyn_cast_rc;
-#[doc(hidden)]
-pub use dynamic_cast::dyn_cast_arc as dynamic_cast_dyn_cast_arc;
 
 /// The pointer to the table containing pointers to class virtual functions.
 ///

@@ -891,10 +891,10 @@ fn build_methods(
     {
         return TokenStream::new();
     }
-    let (rc, cast) = if sync {
-        (quote! { ::basic_oop::alloc_sync_Arc }, quote! { ::basic_oop::dynamic_cast_dyn_cast_arc })
+    let rc = if sync {
+        quote! { ::basic_oop::alloc_sync_Arc }
     } else {
-        (quote! { ::basic_oop::alloc_rc_Rc }, quote! { ::basic_oop::dynamic_cast_dyn_cast_rc })
+        quote! { ::basic_oop::alloc_rc_Rc }
     };
     let methods_enum_name = Ident::new(&(class_name.to_string() + "VirtMethods"), Span::call_site());
     let mut methods_tokens = TokenStream::new();
@@ -909,7 +909,7 @@ fn build_methods(
             let signature = method_signature(&ty, method_name.clone());
             let mut item: ImplItemFn = parse_quote! {
                 #signature {
-                    let this: #rc<dyn #base_trait> = #cast(self.clone()).unwrap();
+                    let this: #rc<dyn #base_trait> = self.clone();
                     #base_trait_ext::#method_name(&this)
                 }
             };
