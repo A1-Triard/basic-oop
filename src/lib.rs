@@ -370,6 +370,7 @@ macro_rules! import_impl {
         @use [$(#[$attr:meta])* use $($list:tt)*]
     ) => {
         $(#[$attr])*
+        #[allow(unused_imports)]
         pub use $($list)*
     };
 }
